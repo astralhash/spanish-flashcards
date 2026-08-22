@@ -1,0 +1,485 @@
+/* VocabES UI layer — vanilla JS, zero dependencies, ~60fps-friendly. */
+'use strict';
+(function () {
+  var C = window.Core;
+  if (!C) throw new Error('core missing');
+
+  var DAY = C.DAY;
+  var LS_KEY = 'vocabes.v1';
+
+  var $ = function (s) { return document.querySelector(s); };
+  var $$ = function (s) { return Array.prototype.slice.call(document.querySelectorAll(s)); };
+  function el(tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+
+  /* ---------------- state ---------------- */
+  var settings = loadSettings();
+  var state = loadState() || C.defaultState();
+  var ENTS = null;                 /* cached combined entry list */
+  var sess = null;                 /* running review session */
+  var challenge = null;            /* running cluster challenge */
+  var saveTimer = null;
+
+  function entries() { return ENTS || (ENTS = C.withIds(VOCAB, state.custom)); }
+
+  function loadSettings() {
+    try {
+      var s = JSON.parse(localStorage.getItem(LS_KEY + '.set') || '{}');
+      return Object.assign({ levels: ['b1', 'b2'], dir: 'es-en', newPerDay: 20, sound: true, theme: null }, s);
+    } catch (e) { return { levels: ['b1', 'b2'], dir: 'es-en', newPerDay: 20, sound: true, theme: null }; }
+  }
+  function saveSettings() { try { localStorage.setItem(LS_KEY + '.set', JSON.stringify(settings)); } catch (e) {} }
+  function loadState() {
+    try { var s = JSON.parse(localStorage.getItem(LS_KEY + '.state') || 'null'); return s; } catch (e) { return null; }
+  }
+  function saveState() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () { try { localStorage.setItem(LS_KEY + '.state', JSON.stringify(state)); } catch (e) {} }, 220);
+  }
+
+  /* ---------------- helpers ---------------- */
+  function entryById(id) {
+    var all = entries();
+    for (var i = 0; i < all.length; i++) if (all[i].id === id) return all[i];
+    return null;
+  }
+  function show(id) {
+    $$('.screen').forEach(function (s) { s.hidden = s.id !== id; });
+  }
+  function dirOf() {
+    if (settings.dir === 'mix') return Math.random() < 0.5 ? 'es-en' : 'en-es';
+    return settings.dir;
+  }
+
+  /* Gender-colored articles for Spanish words. */
+  var ART_RE = /^((?:el|la|los|las|lo|un|una|unos|unas|der|die|das)\s+)(.*)$/i;
+  function renderWord(node, txt) {
+    node.textContent = '';
+    var m = String(txt).match(ART_RE);
+    if (m) {
+      var art = m[1].trim().toLowerCase();
+      var artSpan = el('span', 'art');
+      if (art === 'el' || art === 'los' || art === 'un' || art === 'unos' || art === 'der') artSpan.classList.add('m');
+      else if (art === 'la' || art === 'las' || art === 'una' || art === 'unas' || art === 'die') artSpan.classList.add('f');
+      else artSpan.classList.add('n');
+      artSpan.textContent = m[1];
+      node.appendChild(artSpan);
+      node.appendChild(document.createTextNode(m[2]));
+    } else {
+      node.textContent = txt;
+    }
+  }
+
+  function toast(msg) {
+    var t = $('#toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(t._h);
+    t._h = setTimeout(function () { t.classList.remove('show'); }, 1900);
+  }
+
+  /* tiny WebAudio blips — no assets needed */
+  var actx = null;
+  function beep(freq, dur, type, gain, when) {
+    try {
+      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      if (actx.state === 'suspended') actx.resume();
+      var o = actx.createOscillator(), g = actx.createGain();
+      o.type = type || 'sine'; o.frequency.value = freq;
+      var t0 = actx.currentTime + (when || 0);
+      g.gain.setValueAtTime(gain || 0.07, t0);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g); g.connect(actx.destination);
+      o.start(t0); o.stop(t0 + dur);
+    } catch (e) { /* audio unavailable — stay silent */ }
+  }
+  function sndGood() { if (settings.sound) { beep(620, .08); beep(880, .12, 'sine', .06, .07); } }
+  function sndBad() { if (settings.sound) beep(190, .2, 'triangle', .08); }
+  function sndTic() { if (settings.sound) beep(440, .045, 'sine', .04); }
+
+  /* ---------------- theme ---------------- */
+  var mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  function applyTheme() {
+    var resolved = settings.theme || (mq && mq.matches ? 'dark' : 'light');
+    document.documentElement.dataset.theme = resolved;
+    $('#themeBtn').textContent = resolved === 'dark' ? '☀️' : '🌙';
+  }
+  function toggleTheme() {
+    var resolved = settings.theme || (mq && mq.matches ? 'dark' : 'light');
+    settings.theme = resolved === 'dark' ? 'light' : 'dark';
+    saveSettings(); applyTheme();
+  }
+  if (mq) mq.addEventListener('change', function () { if (!settings.theme) applyTheme(); });
+
+  /* ---------------- start screen ---------------- */
+  function renderStart() {
+    var wrap = $('#levelChips');
+    wrap.textContent = '';
+    var counts = C.countLevels(VOCAB);
+    var all = entries();
+    C.LEVELS.forEach(function (lvl) {
+      var on = settings.levels.indexOf(lvl) !== -1;
+      var total = (counts[lvl] || 0) + state.custom.filter(function (e) { return e[2] === lvl; }).length;
+      var learnedN = 0;
+      for (var i = 0; i < all.length; i++) {
+        var e = all[i];
+        if (e.level === lvl && C.learned(state.cards[e.id])) learnedN++;
+      }
+      var b = el('button', 'chip' + (on ? ' on' : ''));
+      b.appendChild(el('span', 'chip-name', lvl.toUpperCase()));
+      b.appendChild(el('span', 'chip-count', learnedN + ' / ' + total));
+      b.addEventListener('click', function () { toggleLevel(lvl); });
+      wrap.appendChild(b);
+    });
+
+    $$('#dirSeg button').forEach(function (b) {
+      b.classList.toggle('active', b.dataset.dir === settings.dir);
+    });
+
+    var act = C.eligible(all, settings.levels);
+    var learnedN = 0;
+    for (var j = 0; j < act.length; j++) if (C.learned(state.cards[act[j].id])) learnedN++;
+    var due = C.dueCards(state, all, settings.levels).length;
+    $('#startStats').textContent = '';
+    $('#startStats').appendChild(statBox('⌛', 'Due now', due));
+    $('#startStats').appendChild(statBox('📚', 'Learned', act.length ? Math.round(learnedN / act.length * 100) + '%' : '0%'));
+    $('#startStats').appendChild(statBox('★', 'XP', state.xp));
+    $('#startStats').appendChild(statBox('🔥', 'Best streak', state.best));
+  }
+  function statBox(icon, label, value) {
+    var d = el('div', 'stat');
+    d.appendChild(el('b', null, icon + ' ' + value));
+    d.appendChild(el('span', null, label));
+    return d;
+  }
+  function toggleLevel(lvl) {
+    var i = settings.levels.indexOf(lvl);
+    if (i !== -1) {
+      if (settings.levels.length > 1) settings.levels.splice(i, 1);
+    } else {
+      settings.levels.push(lvl);
+      settings.levels.sort(function (a, b) { return C.LEVELS.indexOf(a) - C.LEVELS.indexOf(b); });
+    }
+    saveSettings(); renderStart();
+  }
+
+  /* ---------------- review session ---------------- */
+  function startSession() {
+    var s = C.buildSession(state, entries(), settings.levels, settings.newPerDay);
+    sess = { ids: s.ids, total: s.total, i: 0, correct: 0, xp: 0, best: 0, revoked: new Set(), skippedDue: s.skippedDue };
+    if (s.total === 0) { renderDone(s.skippedDue ? 'All caught up — the rest awaits tomorrow ⏳' : 'Nothing due right now 🎉', 0); return; }
+    show('scr-quiz');
+    renderCard();
+  }
+
+  function renderCard() {
+    var e = entryById(sess.ids[sess.i]);
+    var flip = $('#flip');
+    flip.classList.remove('flipped', 'reload');
+    flip.style.transition = 'none';
+    void flip.offsetWidth;                 /* snap back without animating */
+    flip.style.transition = '';
+    void flip.offsetWidth;
+    flip.classList.add('reload');
+
+    var dir = dirOf();
+    var front = dir === 'es-en' ? e.es : e.en;
+    var back = dir === 'es-en' ? e.en : e.es;
+
+    renderWord($('#frontWord'), front);
+    renderWord($('#backWord'), back);
+    $('#frontWord').parentNode.querySelector('.hint').textContent =
+      (dir === 'es-en' ? 'Spanish → English' : 'English → Spanish') + ' · click or press Space to reveal';
+
+    $('#lvlBadge').hidden = true;   /* the word's level is irrelevant while reviewing */
+    if (e.cluster && C.CLUSTERS[e.cluster]) {
+      $('#clsBadge').textContent = C.CLUSTERS[e.cluster].icon + ' ' + C.CLUSTERS[e.cluster].label;
+      $('#clsBadge').hidden = false;
+    } else { $('#clsBadge').hidden = true; }
+    var card = state.cards[e.id];
+    $('#newBadge').hidden = !(card ? card.r === 0 : true);
+
+    $('#qcount').textContent = (sess.i + 1) + ' / ' + sess.total;
+    $('#qbarFill').style.width = (sess.i / sess.total * 100) + '%';
+  }
+
+  function flipCard() { $('#flip').classList.toggle('flipped'); }
+
+  function grade(q) {
+    if (!sess) return;
+    var id = sess.ids[sess.i];
+    var before = state.cards[id];
+    var res = C.applyGrade(state, id, q);
+    state.total++;
+    if (q === 0) {
+      state.streak = 0;
+      if (!sess.revoked.has(id)) { sess.revoked.add(id); sess.ids.push(id); sess.total++; }
+      sndBad();
+    } else {
+      state.correct++;
+      state.streak++;
+      state.best = Math.max(state.best, state.streak);
+      state.xp += C.xpFor(q);
+      sess.correct++;
+      sess.xp += C.xpFor(q);
+      sess.best = Math.max(sess.best, state.streak);
+      sndGood();
+    }
+    saveState();
+    refreshPills();
+    sess.i++;
+    if (sess.i >= sess.ids.length) endSession();
+    else renderCard();
+    if (before && res === 'again') toast('Back into the queue — you will see it again this session');
+  }
+
+  function endSession() {
+    var reviewed = sess.i;
+    renderDone('Session complete 🎉', reviewed);
+  }
+
+  /* ---------------- done screen ---------------- */
+  function renderDone(title, reviewed) {
+    $('#doneTitle').textContent = title;
+    $('#doneStats').textContent = '';
+    $('#doneStats').appendChild(statBox('🃏', 'Reviewed', reviewed));
+    $('#doneStats').appendChild(statBox('✅', 'Correct', sess && sess.total ? Math.round(sess.correct / sess.total * 100) + '%' : '—'));
+    $('#doneStats').appendChild(statBox('★', 'XP gained', sess ? sess.xp : 0));
+    $('#doneStats').appendChild(statBox('🔥', 'Best streak', sess ? sess.best : state.best));
+
+    /* sometimes a challenge pops up */
+    var offer = C.pickChallengeOffer(state, entries(), settings.levels);
+    var box = $('#chalOffer');
+    if (offer && Math.random() < 0.6) {
+      var def = C.CLUSTERS[offer.key];
+      $('#chalOfferTitle').textContent = def.icon + ' ' + def.label;
+      box.hidden = false;
+      box._key = offer.key;
+    } else { box.hidden = true; }
+
+    renderChalList();
+    show('scr-done');
+  }
+
+  function renderChalList() {
+    var wrap = $('#chalList');
+    wrap.textContent = '';
+    var cands = C.challengeCandidates(state, entries(), settings.levels);
+    if (!cands.length) {
+      wrap.appendChild(el('p', 'muted small', 'No cluster available for the selected levels yet — pick levels that contain cluster words (weekdays, months, numbers, colors, family, food, body, animals).'));
+      return;
+    }
+    cands.sort(function (a, b) { return a.cooldownMs - b.cooldownMs; });
+    cands.forEach(function (cand) {
+      var def = cand.def;
+      var row = el('div', 'chal-row');
+      row.appendChild(el('span', 'chal-icon-s', def.icon));
+      var info = el('div', 'chal-info');
+      info.appendChild(el('b', null, def.label));
+      info.appendChild(el('span', null, cand.words.length + ' words · every ~10 in a row'));
+      row.appendChild(info);
+      var btn = el('button', null, cand.cooldownMs > 0 ? '⏳ ' + Math.ceil(cand.cooldownMs / 60000) + 'm' : 'Start');
+      btn.disabled = cand.cooldownMs > 0;
+      btn.addEventListener('click', function () { startChallenge(cand.key); });
+      row.appendChild(btn);
+      wrap.appendChild(row);
+    });
+  }
+
+  /* ---------------- cluster challenge ---------------- */
+  function startChallenge(key) {
+    challenge = {
+      key: key,
+      qs: C.buildChallenge(state, entries(), settings.levels, key, settings.dir),
+      i: 0, correct: 0, streak: 0, best: 0, xp: 0, locked: false
+    };
+    if (!challenge.qs.length) { toast('Not enough words for this cluster in the selected levels'); return; }
+    var def = C.CLUSTERS[key];
+    $('#chCluster').textContent = def.icon + ' ' + def.label;
+    show('scr-chal');
+    renderChalQ();
+    sndTic();
+  }
+
+  function renderChalQ() {
+    var q = challenge.qs[challenge.i];
+    $('#chDir').textContent = q.d === 'es-en' ? 'Spanish → English' : 'English → Spanish';
+    renderWord($('#chWord'), q.d === 'es-en' ? q.es : q.en);
+    var wrap = $('#chOpts');
+    wrap.textContent = '';
+    q.opts.forEach(function (opt, idx) {
+      var b = el('button', null, '');
+      renderWord(b, opt);
+      b.addEventListener('click', function () { answer(idx); });
+      wrap.appendChild(b);
+    });
+    $('#chCount').textContent = (challenge.i + 1) + ' / ' + challenge.qs.length;
+    $('#chBarFill').style.width = (challenge.i / challenge.qs.length * 100) + '%';
+    var card = $('#chal-q-card');
+    if (card) { card.classList.remove('reload'); void card.offsetWidth; card.classList.add('reload'); }
+    challenge.locked = false;
+  }
+
+  function answer(idx) {
+    if (!challenge || challenge.locked) return;
+    challenge.locked = true;
+    var q = challenge.qs[challenge.i];
+    var btns = $$('#chOpts button');
+    var chosen = btns[idx];
+    var ok = chosen.textContent.trim().toLowerCase() === q.answer.trim().toLowerCase();
+    if (ok) {
+      chosen.classList.add('right');
+      challenge.correct++; challenge.streak++;
+      challenge.best = Math.max(challenge.best, challenge.streak);
+      sndGood();
+    } else {
+      chosen.classList.add('wrong');
+      challenge.streak = 0;
+      for (var i = 0; i < btns.length; i++) {
+        if (btns[i].textContent.trim().toLowerCase() === q.answer.trim().toLowerCase()) { btns[i].classList.add('right'); break; }
+      }
+      sndBad();
+    }
+    btns.forEach(function (b) { b.classList.add('lock'); });
+    setTimeout(function () {
+      if (!challenge) return;                    /* aborted meanwhile */
+      challenge.i++;
+      if (challenge.i >= challenge.qs.length) finishChallenge();
+      else renderChalQ();
+    }, 520);
+  }
+
+  function finishChallenge() {
+    var n = challenge.qs.length;
+    var xp = 10 + 2 * challenge.correct + (challenge.best >= 8 ? 10 : challenge.best >= 5 ? 5 : 0);
+    state.xp += xp;
+    var prev = state.chalDone[challenge.key] || { n: 0, last: 0 };
+    state.chalDone[challenge.key] = { n: prev.n + 1, last: Date.now() };
+    saveState();
+    refreshPills();
+
+    $('#chdTitle').textContent = 'Challenge complete';
+    $('#chdStats').textContent = '';
+    $('#chdStats').appendChild(statBox('🎯', 'Score', challenge.correct + ' / ' + n));
+    $('#chdStats').appendChild(statBox('🔥', 'Best streak', challenge.best));
+    $('#chdStats').appendChild(statBox('★', 'XP earned', '+' + xp));
+    $('#chdStats').appendChild(statBox('🗂️', 'Cluster', C.CLUSTERS[challenge.key].label));
+    show('scr-chaldone');
+    toast('+' + xp + ' XP for the ' + C.CLUSTERS[challenge.key].label + ' challenge ⚡');
+    challenge = null;
+  }
+
+  /* ---------------- import / settings ---------------- */
+  function openModal() { $('#modal').hidden = false; $('#setNew').value = settings.newPerDay; $('#setNewVal').textContent = settings.newPerDay + ' / day'; $('#setSound').checked = !!settings.sound; $('#importMsg').textContent = ''; }
+  function closeModal() { $('#modal').hidden = true; }
+
+  function doImport() {
+    var text = $('#importArea').value;
+    if (!text.trim()) { $('#importMsg').textContent = 'Paste words first.'; return; }
+    var res = C.parseImport(text);
+    if (!res.entries.length) { $('#importMsg').textContent = 'Nothing importable — check the format.'; return; }
+    state.custom = state.custom.concat(res.entries);
+    ENTS = null;
+    saveState();
+    refreshPills();
+    $('#importArea').value = '';
+    var msg = '✓ ' + res.entries.length + ' word(s) imported';
+    if (res.errors) msg += ' · ' + res.errors + ' skipped (duplicate/invalid)';
+    $('#importMsg').textContent = msg;
+    toast(msg);
+    renderStart();
+  }
+
+  /* ---------------- global UI updates ---------------- */
+  function refreshPills() {
+    var due = C.dueCards(state, entries(), settings.levels).length;
+    var p = $('#duePill');
+    p.textContent = '⏰ ' + (due > 0 ? due : '0 due');
+    p.classList.toggle('hot', due > 0);
+    $('#xpPill').textContent = '★ ' + state.xp;
+  }
+
+  /* ---------------- events ---------------- */
+  function init() {
+    applyTheme();
+
+    $('#startBtn').addEventListener('click', startSession);
+    $('#dirSeg').addEventListener('click', function (ev) {
+      var b = ev.target.closest('button');
+      if (!b) return;
+      settings.dir = b.dataset.dir;
+      saveSettings(); renderStart();
+    });
+    $('#flip').addEventListener('click', function (ev) {
+      /* ignore clicks on the grade buttons — they live inside the card and must not flip it */
+      if (ev.target && ev.target.closest && ev.target.closest('.g')) return;
+      flipCard();
+    });
+    $('#quitBtn').addEventListener('click', function () { if (sess) endSession(); });
+    $('#againBtn').addEventListener('click', startSession);
+    $('#homeBtn').addEventListener('click', function () { show('scr-start'); renderStart(); refreshPills(); });
+    $('#grades').addEventListener('click', function (ev) {
+      var b = ev.target.closest('.g');
+      if (!b) return;
+      ev.stopPropagation();                /* grade clicks must not bubble to the card flip toggle */
+      if (typeof b.blur === 'function') b.blur();
+      /* above: drop keyboard focus so a later Space flips the card instead of re-grading (stale focus) */
+      grade(parseInt(b.dataset.q, 10));
+    });
+    $('#chalStart').addEventListener('click', function () { var box = $('#chalOffer'); if (box._key) startChallenge(box._key); });
+    $('#chQuit').addEventListener('click', function () { challenge = null; show('scr-start'); renderStart(); refreshPills(); toast('Challenge aborted'); });
+    $('#chdAgain').addEventListener('click', startSession);
+    $('#chdHome').addEventListener('click', function () { show('scr-start'); renderStart(); refreshPills(); });
+
+    $('#themeBtn').addEventListener('click', toggleTheme);
+    $('#settingsBtn').addEventListener('click', openModal);
+    $('#modalClose').addEventListener('click', closeModal);
+    $('#modal').addEventListener('click', function (ev) { if (ev.target === this) closeModal(); });
+    $('#setNew').addEventListener('input', function () {
+      settings.newPerDay = parseInt($('#setNew').value, 10);
+      $('#setNewVal').textContent = settings.newPerDay + ' / day';
+      saveSettings();
+    });
+    $('#setSound').addEventListener('change', function () { settings.sound = $('#setSound').checked; saveSettings(); });
+    $('#importBtn').addEventListener('click', doImport);
+    $('#resetProgress').addEventListener('click', function () {
+      if (!confirm('Reset all learning progress? Imported words stay.')) return;
+      state.cards = {}; state.chalDone = {}; state.xp = 0; state.total = 0; state.correct = 0; state.streak = 0; state.best = 0;
+      ENTS = null; saveState(); refreshPills(); renderStart();
+      toast('Progress reset');
+    });
+    $('#resetAll').addEventListener('click', function () {
+      if (!confirm('Delete EVERYTHING (progress + imported words)?')) return;
+      try { localStorage.removeItem(LS_KEY + '.state'); } catch (e) {}
+      state = C.defaultState(); ENTS = null;
+      saveState(); refreshPills(); renderStart();
+      toast('Fresh start');
+    });
+
+    document.addEventListener('keydown', function (ev) {
+      if (!$('#modal').hidden) {
+        if (ev.key === 'Escape') closeModal();
+        return;
+      }
+      var quiz = !$('#scr-quiz').hidden;
+      var chal = !$('#scr-chal').hidden;
+      if (quiz) {
+        if (ev.key === ' ' || ev.key === 'Enter') {
+          /* let focused grade buttons keep their native click */
+          if (ev.target && ev.target.closest && ev.target.closest('.g')) return;
+          ev.preventDefault(); flipCard();
+        }
+        else if (ev.key === 'Escape') { ev.preventDefault(); if (sess) endSession(); }
+        else if (ev.key >= '1' && ev.key <= '4' && $('#flip').classList.contains('flipped')) grade(parseInt(ev.key, 10) - 1);
+      } else if (chal) {
+        if (ev.key >= '1' && ev.key <= '4') { ev.preventDefault(); answer(parseInt(ev.key, 10) - 1); }
+        else if (ev.key === 'Escape') { $('#chQuit').click(); }
+      }
+    });
+
+    renderStart();
+    refreshPills();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();

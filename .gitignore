@@ -1,0 +1,6 @@
+# dependencies (jsdom for e2e tests)
+scripts/tests/node_modules/
+
+# OS junk
+.DS_Store
+*.log

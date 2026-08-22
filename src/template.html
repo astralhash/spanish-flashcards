@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>VocabES — European Spanish flashcards (B1–C2)</title>
+<style>
+/*__CSS__*/
+</style>
+</head>
+<body>
+<div class="glow" aria-hidden="true"></div>
+<div class="glow glow2" aria-hidden="true"></div>
+
+<header class="top">
+  <div class="brand">🇪🇸 <b>VocabES</b> <span class="tag">European Spanish</span></div>
+  <div class="top-right">
+    <span id="duePill" class="pill" title="Cards due now"></span>
+    <span id="xpPill" class="pill" title="Experience points">★ 0</span>
+    <button id="themeBtn" class="icon-btn" title="Toggle dark mode" aria-label="Toggle dark mode">☀️</button>
+    <button id="settingsBtn" class="icon-btn" title="Settings" aria-label="Settings">⚙️</button>
+  </div>
+</header>
+
+<main>
+  <!-- ================= START ================= -->
+  <section id="scr-start" class="screen">
+    <div class="card hero">
+      <h1>Spanish Flashcards</h1>
+      <p class="sub">European Spanish · B1–C2 · spaced repetition · cluster challenges</p>
+
+      <div class="lbl">Levels</div>
+      <div class="chips" id="levelChips"></div>
+
+      <div class="row">
+        <span class="lbl">Direction</span>
+        <div class="seg" id="dirSeg">
+          <button data-dir="es-en">ES → EN</button>
+          <button data-dir="en-es">EN → ES</button>
+          <button data-dir="mix">Mix</button>
+        </div>
+      </div>
+
+      <button id="startBtn" class="primary big">▶&nbsp; Start session</button>
+
+      <div id="startStats" class="stats"></div>
+    </div>
+    <p class="foot-note">SM-2 spaced repetition · all progress is saved locally in your browser · 1000 built-in words, extendable via <b>Settings → Import</b> · Tip: keys <kbd>Space</kbd> reveal, <kbd>1</kbd>–<kbd>4</kbd> grade.</p>
+  </section>
+
+  <!-- ================= QUIZ ================= -->
+  <section id="scr-quiz" class="screen" hidden>
+    <div class="quiz-top">
+      <span id="qcount" class="pill"></span>
+      <button id="quitBtn" class="ghost">End session</button>
+    </div>
+    <div class="qbar"><div id="qbarFill"></div></div>
+
+    <div id="flip" class="flipcard" tabindex="0" role="button" aria-label="Flashcard — show answer">
+      <div class="face front">
+        <div class="badges">
+          <span id="lvlBadge" class="badge"></span>
+          <span id="clsBadge" class="badge cluster" hidden></span>
+          <span id="newBadge" class="badge new" hidden>NEW</span>
+        </div>
+        <div id="frontWord" class="word"></div>
+        <div class="hint">Click card or press <kbd>Space</kbd> to reveal</div>
+      </div>
+      <div class="face back">
+        <div class="badges"><span class="badge">answer</span></div>
+        <div id="backWord" class="word"></div>
+        <div id="grades" class="grades">
+          <button class="g g-again" data-q="0"><kbd>1</kbd> Again</button>
+          <button class="g g-hard" data-q="1"><kbd>2</kbd> Hard</button>
+          <button class="g g-good" data-q="2"><kbd>3</kbd> Good</button>
+          <button class="g g-easy" data-q="3"><kbd>4</kbd> Easy</button>
+        </div>
+        <div class="hint hb"><kbd>1</kbd> again → returns this session</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= DONE ================= -->
+  <section id="scr-done" class="screen" hidden>
+    <div class="card hero">
+      <h2 id="doneTitle">Session complete 🎉</h2>
+      <div id="doneStats" class="stats big"></div>
+
+      <div id="chalOffer" class="chal-offer" hidden>
+        <div class="chal-offer-txt"><span class="chal-icon">⚡</span><div><b id="chalOfferTitle">Cluster challenge</b><div class="sub small">A short burst of ~10 words from one cluster</div></div></div>
+        <button id="chalStart" class="primary">Start</button>
+      </div>
+
+      <div class="row wrap">
+        <button id="againBtn" class="secondary">▶&nbsp; Another round</button>
+        <button id="homeBtn" class="ghost">Home</button>
+      </div>
+    </div>
+
+    <div class="card chal-list">
+      <div class="chal-head">Cluster challenges <span class="muted">(word groups · offered from time to time, or start one below)</span></div>
+      <div id="chalList"></div>
+    </div>
+  </section>
+
+  <!-- ================= CHALLENGE ================= -->
+  <section id="scr-chal" class="screen" hidden>
+    <div class="quiz-top">
+      <span id="chCluster" class="pill"></span>
+      <span id="chCount" class="pill"></span>
+      <button id="chQuit" class="ghost">Abort</button>
+    </div>
+    <div class="qbar"><div id="chBarFill"></div></div>
+
+    <div id="chal-q-card" class="card chal-q">
+      <div id="chDir" class="sub small"></div>
+      <div id="chWord" class="word"></div>
+      <div id="chOpts" class="opts"></div>
+    </div>
+  </section>
+
+  <!-- ================= CHALLENGE DONE ================= -->
+  <section id="scr-chaldone" class="screen" hidden>
+    <div class="card hero">
+      <h2 id="chdTitle">Challenge complete</h2>
+      <div id="chdStats" class="stats big"></div>
+      <div class="row wrap">
+        <button id="chdAgain" class="primary">▶&nbsp; Next session</button>
+        <button id="chdHome" class="ghost">Home</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ================= MODAL ================= -->
+<div id="modal" class="modal-back" hidden>
+  <div class="modal">
+    <div class="modal-head"><h3>Settings</h3><button id="modalClose" class="icon-btn" aria-label="Close">✕</button></div>
+    <div class="modal-body">
+      <label class="field">New cards per day
+        <div class="range-row"><input type="range" id="setNew" min="5" max="60" step="5"><span id="setNewVal" class="muted"></span></div>
+      </label>
+      <label class="field check"><input type="checkbox" id="setSound"> Sounds</label>
+
+      <label class="field">Import words <span class="muted">— make the deck yours (saved in this browser)</span>
+        <textarea id="importArea" rows="6" spellcheck="false" placeholder='JSON array, e.g. [["el gato","cat","b1"]]  — or one per line:  el gato | cat | b1   (optional 4th column: cluster id — wochentage, monate, zahlen, farben, familie, essen, koerper, tiere)'></textarea>
+        <button id="importBtn" class="secondary">Import</button>
+        <span id="importMsg" class="muted"></span>
+      </label>
+
+      <div class="danger">
+        <button id="resetProgress" class="danger-btn">Reset learning progress</button>
+        <button id="resetAll" class="danger-btn">Delete everything (incl. imports)</button>
+      </div>
+      <p class="muted small">Data lives in <code>localStorage</code> of this browser. Built-in word list: 1000 curated European-Spanish words (B1: 400 · B2: 300 · C1: 200 · C2: 100).</p>
+    </div>
+  </div>
+</div>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+/*__CORE__*/
+</script>
+<script>
+/*__VOCAB__*/
+</script>
+<script>
+/*__APP__*/
+</script>
+</body>
+</html>
