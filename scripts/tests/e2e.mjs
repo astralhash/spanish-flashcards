@@ -115,6 +115,32 @@ ok(doc.querySelector('#importMsg').textContent.includes('2 word'), 'import accep
 click(doc.querySelector('#modalClose'));
 await wait(20);
 
+/* conjugation hover card */
+const mo = (target, opts) => target.dispatchEvent(new window.MouseEvent('mouseover', Object.assign({ bubbles: true, cancelable: true, view: window }, opts || {})));
+ok(!!window.Conj, 'conjugation engine present in page');
+ok(window.Conj.analyze('tomar el pelo') && window.Conj.analyze('tomar el pelo').head === 'tomar', 'analyze handles idioms');
+ok(window.Conj.analyze('ayer') === null, 'analyze rejects ayer');
+const pg = window.Conj.table('pagar');
+ok(pg && pg.tenses[0].rows.some((r) => r[1] === 'pago'), 'pagar presente yo = pago');
+ok(pg && pg.tenses[1].rows.some((r) => r[1] === 'pagué'), 'pagar preterite yo = pagué');
+const vw = doc.createElement('div');
+vw.dataset.conj = 'pagar';
+doc.body.appendChild(vw);
+mo(vw, { clientX: 120, clientY: 130 });
+await wait(30);
+const cc = doc.querySelector('#conjCard');
+ok(cc && cc.classList.contains('show'), 'hover shows conjugation card');
+ok(cc && cc.textContent.includes('pago') && cc.textContent.includes('pagamos'), 'card contains pago/pagamos');
+mo(vw, { clientX: 200, clientY: 200 });
+await wait(20);
+mo(doc.body, { clientX: 5, clientY: 5 });   /* leave the verb */
+await wait(20);
+ok(!cc.classList.contains('show'), 'card hides when pointer leaves the verb');
+vw.remove();
+
+/* custom imported word conjugates too (analyze fallback) */
+ok(window.Conj.analyze('nadar') && window.Conj.analyze('nadar').head === 'nadar', 'custom infinitive conjugates');
+
 /* local state persisted */
 const saved = JSON.parse(window.localStorage.getItem('vocabes.v1.state') || 'null');
 ok(saved && saved.custom.length === 2, 'import persisted to localStorage');

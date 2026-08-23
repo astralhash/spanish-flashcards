@@ -3,6 +3,7 @@
 (function () {
   var C = window.Core;
   if (!C) throw new Error('core missing');
+  var CJ = window.Conj || null;    /* conjugation engine — may be absent in stub builds */
 
   var DAY = C.DAY;
   var LS_KEY = 'vocabes.v1';
@@ -52,8 +53,17 @@
 
   /* Gender-colored articles for Spanish words. */
   var ART_RE = /^((?:el|la|los|las|lo|un|una|unos|unas|der|die|das)\s+)(.*)$/i;
-  function renderWord(node, txt) {
+  function renderWord(node, txt, isEs) {
     node.textContent = '';
+    /* mark Spanish verbs: hovering them shows a live conjugation card */
+    if (isEs && CJ) {
+      var cj = CJ.analyze(txt);
+      if (cj) { node.dataset.conj = txt; node.classList.add('verbal'); hideConj(); }
+      else { node.removeAttribute('data-conj'); node.classList.remove('verbal'); }
+    } else {
+      node.removeAttribute('data-conj');
+      node.classList.remove('verbal');
+    }
     var m = String(txt).match(ART_RE);
     if (m) {
       var art = m[1].trim().toLowerCase();
@@ -67,6 +77,111 @@
     } else {
       node.textContent = txt;
     }
+  }
+
+  /* ---------------- conjugation hover card ---------------- */
+  var conjCard = null;          /* DOM node */
+  var conjKey = null;           /* phrase currently shown */
+  var conjCache = {};           /* phrase → parsed table object */
+  var conjTouch = 0;            /* timestamp when a touch long-press shown the card */
+
+  function conjEl() {
+    if (!conjCard) {
+      conjCard = el('div', 'conj-card');
+      conjCard.id = 'conjCard';
+      conjCard.setAttribute('role', 'tooltip');
+      document.body.appendChild(conjCard);
+    }
+    return conjCard;
+  }
+
+  function conjTable(phrase) {
+    if (conjCache[phrase]) return conjCache[phrase];
+    return (conjCache[phrase] = CJ.table(phrase) || false);
+  }
+
+  function cellText(verb, form) {
+    return form + (verb.suffix || '');
+  }
+
+  function buildConjDom(t) {
+    var card = el('div', 'conj-inner');
+
+    var head = el('div', 'conj-head');
+    head.appendChild(el('div', 'conj-word', t.phrase));
+    var sub = 'conjugation of ' + t.base;
+    if (t.reflex) sub += ' · reflexive';
+    if (t.defective && t.note) sub += ' · ' + t.note;
+    head.appendChild(el('div', 'conj-sub', sub));
+    card.appendChild(head);
+
+    var grid = el('div', 'conj-grid');
+    t.tenses.forEach(function (tm) {
+      var b = el('div', 'conj-tense');
+      b.appendChild(el('div', 'conj-tense-name', tm.label));
+      tm.rows.forEach(function (r) {
+        var row = el('div', 'conj-row');
+        row.appendChild(el('span', 'conj-pron', r[0]));
+        row.appendChild(el('span', 'conj-form', cellText(t, r[1])));
+        b.appendChild(row);
+      });
+      grid.appendChild(b);
+    });
+    card.appendChild(grid);
+
+    if (t.imperative) {
+      var imp = el('div', 'conj-tense');
+      imp.appendChild(el('div', 'conj-tense-name', 'Imperative'));
+      [['tú', t.imperative.tu], ['usted', t.imperative.usted], ['nosotros', t.imperative.nosotros],
+       ['vosotros', t.imperative.vosotros], ['ustedes', t.imperative.ustedes]].forEach(function (p) {
+        var row = el('div', 'conj-row');
+        row.appendChild(el('span', 'conj-pron', p[0]));
+        row.appendChild(el('span', 'conj-form', cellText(t, p[1])));
+        imp.appendChild(row);
+      });
+      grid.appendChild(imp);
+    }
+
+    var foot = el('div', 'conj-foot');
+    var ge = t.reflex && t.gerundSe ? t.gerundSe : t.gerund;
+    foot.appendChild(el('span', 'conj-chip', 'Gerund: ' + cellText(t, ge)));
+    foot.appendChild(el('span', 'conj-chip', 'Participle: ' + cellText(t, t.participle)));
+    card.appendChild(foot);
+
+    return card;
+  }
+
+  function positionConj(x, y) {
+    var c = conjEl();
+    var pad = 14, margin = 8;
+    var vw = window.innerWidth || document.documentElement.clientWidth;
+    var vh = window.innerHeight || document.documentElement.clientHeight;
+    var w = c.offsetWidth, h = c.offsetHeight;
+    var left = x + pad, top = y + pad;
+    if (left + w > vw - margin) left = x - w - pad;
+    if (top + h > vh - margin) top = y - h - pad;
+    if (top < margin) top = margin;
+    c.style.left = Math.max(margin, left) + 'px';
+    c.style.top = top + 'px';
+  }
+
+  function showConj(phrase, x, y) {
+    if (!CJ) return;
+    var t = conjTable(phrase);
+    if (!t) return;
+    var c = conjEl();
+    if (conjKey !== phrase) {
+      conjKey = phrase;
+      c.textContent = '';
+      c.appendChild(buildConjDom(t));
+    }
+    c.classList.add('show');
+    positionConj(x, y);
+  }
+
+  function hideConj() {
+    conjKey = null;
+    if (conjCard) conjCard.classList.remove('show');
   }
 
   function toast(msg) {
@@ -173,6 +288,7 @@
 
   function renderCard() {
     var e = entryById(sess.ids[sess.i]);
+    hideConj();
     var flip = $('#flip');
     flip.classList.remove('flipped', 'reload');
     flip.style.transition = 'none';
@@ -185,8 +301,8 @@
     var front = dir === 'es-en' ? e.es : e.en;
     var back = dir === 'es-en' ? e.en : e.es;
 
-    renderWord($('#frontWord'), front);
-    renderWord($('#backWord'), back);
+    renderWord($('#frontWord'), front, dir === 'es-en');
+    renderWord($('#backWord'), back, dir === 'en-es');
     $('#frontWord').parentNode.querySelector('.hint').textContent =
       (dir === 'es-en' ? 'Spanish → English' : 'English → Spanish') + ' · click or press Space to reveal';
 
@@ -302,13 +418,14 @@
 
   function renderChalQ() {
     var q = challenge.qs[challenge.i];
+    hideConj();
     $('#chDir').textContent = q.d === 'es-en' ? 'Spanish → English' : 'English → Spanish';
-    renderWord($('#chWord'), q.d === 'es-en' ? q.es : q.en);
+    renderWord($('#chWord'), q.d === 'es-en' ? q.es : q.en, q.d === 'es-en');
     var wrap = $('#chOpts');
     wrap.textContent = '';
     q.opts.forEach(function (opt, idx) {
       var b = el('button', null, '');
-      renderWord(b, opt);
+      renderWord(b, opt, q.d === 'en-es');
       b.addEventListener('click', function () { answer(idx); });
       wrap.appendChild(b);
     });
@@ -412,6 +529,7 @@
     $('#flip').addEventListener('click', function (ev) {
       /* ignore clicks on the grade buttons — they live inside the card and must not flip it */
       if (ev.target && ev.target.closest && ev.target.closest('.g')) return;
+      if (Date.now() < suppressFlipUntil) return;   /* long-press conj card was shown */
       flipCard();
     });
     $('#quitBtn').addEventListener('click', function () { if (sess) endSession(); });
@@ -434,6 +552,46 @@
     $('#settingsBtn').addEventListener('click', openModal);
     $('#modalClose').addEventListener('click', closeModal);
     $('#modal').addEventListener('click', function (ev) { if (ev.target === this) closeModal(); });
+
+    /* ---- conjugation hover card ---- */
+    var suppressFlipUntil = 0;   /* long-press shows the card — swallow the follow-up click */
+    if (CJ) {
+      document.addEventListener('mouseover', function (ev) {
+        var t = ev.target && ev.target.closest ? ev.target.closest('[data-conj]') : null;
+        if (!t || !t.dataset.conj || !CJ.analyze(t.dataset.conj)) { hideConj(); return; }
+        var x = (ev.clientX != null) ? ev.clientX : window.innerWidth / 2;
+        var y = (ev.clientY != null) ? ev.clientY : window.innerHeight / 2;
+        showConj(t.dataset.conj, x, y);
+      });
+      document.addEventListener('mousemove', function (ev) {
+        if (conjKey && ev.clientX != null) positionConj(ev.clientX, ev.clientY);
+      });
+      document.addEventListener('mouseout', function (ev) {
+        if (!ev.relatedTarget) hideConj();           /* pointer left the window */
+      });
+      /* touch fallback: long-press a verb to pin its table */
+      var holdTimer = null;
+      document.addEventListener('touchstart', function (ev) {
+        var t = ev.target && ev.target.closest ? ev.target.closest('[data-conj]') : null;
+        clearTimeout(holdTimer);
+        if (!t || !t.dataset.conj) return;
+        var touch = ev.touches && ev.touches[0];
+        if (!touch) return;
+        holdTimer = setTimeout(function () {
+          conjTouch = Date.now();
+          showConj(t.dataset.conj, touch.clientX, touch.clientY);
+        }, 460);
+      }, { passive: true });
+      document.addEventListener('touchmove', function () { clearTimeout(holdTimer); }, { passive: true });
+      document.addEventListener('touchend', function () {
+        clearTimeout(holdTimer);
+        if (conjTouch && Date.now() - conjTouch < 800) {
+          hideConj();
+          suppressFlipUntil = Date.now() + 700;      /* don't flip the card underneath */
+        }
+        conjTouch = 0;
+      }, { passive: true });
+    }
     $('#setNew').addEventListener('input', function () {
       settings.newPerDay = parseInt($('#setNew').value, 10);
       $('#setNewVal').textContent = settings.newPerDay + ' / day';

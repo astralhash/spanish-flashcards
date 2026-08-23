@@ -78,13 +78,32 @@ if (short.length) {
 
 /* ---------- 4. assemble single html ---------- */
 const core = readFileSync('src/core.cjs', 'utf8');
+const conj = readFileSync('src/conj.cjs', 'utf8');
 const css = readFileSync('src/style.css', 'utf8');
 const app = readFileSync('src/app.js', 'utf8');
 let html = readFileSync('src/template.html', 'utf8');
 const vocabJs = 'const VOCAB = ' + JSON.stringify(merged).replace(/</g, '\\u003c') + ';';
 
+/* conjugation coverage: every entry that starts with an infinitive must conjugate */
+const { createRequire } = await import('node:module');
+const require = createRequire(import.meta.url);
+const Conj = require('../src/conj.cjs');
+let conjCount = 0, conjMiss = [];
+for (const row of merged) {
+  if (Conj.analyze(row[0])) conjCount++;
+  else {
+    const first = String(row[0]).split(/\s+/)[0].toLowerCase().replace(/^no\s+/, '');
+    if (/(?:ar|er|ir|ír|arse|erse|irse)$/.test(first)) conjMiss.push(row[0]);
+  }
+}
+console.log(`conjugations: ${conjCount} entries with conjugation data (hover tables)`);
+if (conjMiss.length) {
+  console.log('  WARNING — infinitive-led entries without conjugation:', conjMiss.join(' | '));
+}
+
 html = html.replace('/*__CSS__*/', () => css)
            .replace('/*__CORE__*/', () => core)
+           .replace('/*__CONJ__*/', () => conj)
            .replace('/*__VOCAB__*/', () => vocabJs)
            .replace('/*__APP__*/', () => app);   /* replacer fn: prevents $ pattern interpretation ($$ in app.js!) */
 
