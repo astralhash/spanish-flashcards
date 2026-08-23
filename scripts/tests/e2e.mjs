@@ -91,6 +91,9 @@ if (startBtn) {
   ok($$('#chOpts button').length === 4, '4 answer options');
   const word = doc.querySelector('#chWord').textContent.trim();
   ok(word.length > 0, 'question word shown: ' + word);
+  ok(!doc.querySelector('#chWord').hasAttribute('data-conj') &&
+     [...doc.querySelectorAll('#chOpts button')].every((b) => !b.hasAttribute('data-conj')),
+     'challenge words are not conjugation-tagged (no overlay in flash rounds)');
   /* answer 3 questions correctly by finding the letter that matches q.answer in q.opts */
   for (let i = 0; i < 3; i++) {
     const opts = $$('#chOpts button');

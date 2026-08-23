@@ -1920,12 +1920,13 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
     var q = challenge.qs[challenge.i];
     hideConj();
     $('#chDir').textContent = q.d === 'es-en' ? 'Spanish → English' : 'English → Spanish';
-    renderWord($('#chWord'), q.d === 'es-en' ? q.es : q.en, q.d === 'es-en');
+    /* challenge words/options stay untagged: no conjugation card in the 4-answer flash rounds */
+    renderWord($('#chWord'), q.d === 'es-en' ? q.es : q.en);
     var wrap = $('#chOpts');
     wrap.textContent = '';
     q.opts.forEach(function (opt, idx) {
       var b = el('button', null, '');
-      renderWord(b, opt, q.d === 'en-es');
+      renderWord(b, opt);
       b.addEventListener('click', function () { answer(idx); });
       wrap.appendChild(b);
     });
