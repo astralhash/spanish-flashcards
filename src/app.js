@@ -259,6 +259,7 @@
     $('#startStats').appendChild(statBox('📚', 'Learned', act.length ? Math.round(learnedN / act.length * 100) + '%' : '0%'));
     $('#startStats').appendChild(statBox('★', 'XP', state.xp));
     $('#startStats').appendChild(statBox('🔥', 'Best streak', state.best));
+    renderChalList('chalListStart');
   }
   function statBox(icon, label, value) {
     var d = el('div', 'stat');
@@ -376,28 +377,18 @@
     show('scr-done');
   }
 
-  function renderChalList() {
-    var wrap = $('#chalList');
+  function renderChalList(hostId) {
+    var wrap = document.getElementById(hostId || 'chalList');
     wrap.textContent = '';
     var cands = C.challengeCandidates(state, entries(), settings.levels);
-    if (!cands.length) {
-      wrap.appendChild(el('p', 'muted small', 'No cluster available for the selected levels yet — pick levels that contain cluster words (weekdays, months, numbers, colors, family, food, body, animals, everyday expressions, slang, TV & film).'));
-      return;
-    }
-    cands.sort(function (a, b) { return a.cooldownMs - b.cooldownMs; });
     cands.forEach(function (cand) {
       var def = cand.def;
-      var row = el('div', 'chal-row');
-      row.appendChild(el('span', 'chal-icon-s', def.icon));
-      var info = el('div', 'chal-info');
-      info.appendChild(el('b', null, def.label));
-      info.appendChild(el('span', null, cand.words.length + ' words · every ~10 in a row'));
-      row.appendChild(info);
-      var btn = el('button', null, cand.cooldownMs > 0 ? '⏳ ' + Math.ceil(cand.cooldownMs / 60000) + 'm' : 'Start');
-      btn.disabled = cand.cooldownMs > 0;
-      btn.addEventListener('click', function () { startChallenge(cand.key); });
-      row.appendChild(btn);
-      wrap.appendChild(row);
+      var tile = el('button', 'chal-tile');
+      tile.appendChild(el('span', 'chal-tile-icon', def.icon));
+      tile.appendChild(el('span', 'chal-tile-name', def.label));
+      tile.appendChild(el('span', 'chal-tile-sub', cand.words.length + ' words'));
+      tile.addEventListener('click', function () { startChallenge(cand.key); });
+      wrap.appendChild(tile);
     });
   }
 
@@ -408,7 +399,7 @@
       qs: C.buildChallenge(state, entries(), settings.levels, key, settings.dir),
       i: 0, correct: 0, streak: 0, best: 0, xp: 0, locked: false
     };
-    if (!challenge.qs.length) { toast('Not enough words for this cluster in the selected levels'); return; }
+    if (!challenge.qs.length) { toast('Not enough words in this cluster yet'); return; }
     var def = C.CLUSTERS[key];
     $('#chCluster').textContent = def.icon + ' ' + def.label;
     show('scr-chal');
@@ -470,8 +461,8 @@
     var n = challenge.qs.length;
     var xp = 10 + 2 * challenge.correct + (challenge.best >= 8 ? 10 : challenge.best >= 5 ? 5 : 0);
     state.xp += xp;
-    var prev = state.chalDone[challenge.key] || { n: 0, last: 0 };
-    state.chalDone[challenge.key] = { n: prev.n + 1, last: Date.now() };
+    var prev = state.chalDone[challenge.key] || { n: 0 };
+    state.chalDone[challenge.key] = { n: prev.n + 1 };
     saveState();
     refreshPills();
 

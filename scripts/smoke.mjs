@@ -68,11 +68,14 @@ ok(card.i === 3 && card.e === 2.65, 'easy: 3 days, ease 2.5 -> 2.65');
 /* daily new-card quota */
 ok(Core.newTodayCount(st) === 1, 'newTodayCount: exactly the card introduced today (idB)');
 
-/* challenges */
+/* challenges — independent of the level selection */
 const cands = Core.challengeCandidates(st, entries, ['b1']);
-ok(cands.length === 2, 'two clusters eligible for b1 (farben, wochentage)');
+ok(cands.length === Object.keys(Core.CLUSTERS).length, 'every cluster is always listed (main menu shows all)');
+ok(cands.filter((c) => c.startable).length === 3, 'farben, wochentage, tiere all startable (level-independent)');
+const candsC2 = Core.challengeCandidates(st, entries, ['c2']);
+ok(cands.filter((c) => c.startable).map((c) => c.key).join() === candsC2.filter((c) => c.startable).map((c) => c.key).join(), 'startability is identical whatever levels are picked');
 const offer = Core.pickChallengeOffer(st, entries, ['b1']);
-ok(offer && (offer.key === 'farben' || offer.key === 'wochentage'), 'offer picks an eligible cluster');
+ok(offer && cands.find((c) => c.key === offer.key).startable, 'offer picks a startable cluster');
 const qs = Core.buildChallenge(st, entries, ['b1'], 'farben', 'es-en');
 ok(qs.length === 10, 'challenge = 10 questions');
 for (const q of qs) {
@@ -81,12 +84,14 @@ for (const q of qs) {
   ok(new Set(q.opts.map((x) => x.toLowerCase())).size === 4, 'options unique');
 }
 ok(Core.buildChallenge(st, entries, ['b1'], 'farben', 'mix').length === 10, 'mix direction still 10 questions');
+ok(Core.buildChallenge(st, entries, ['c2'], 'farben', 'es-en').length === 10, 'challenge draws from the whole deck, not just selected levels');
 
-/* challenge cooldown */
-st.chalDone.farben = { n: 1, last: T };
-const after = Core.challengeCandidates(st, entries, ['b1']);
-ok(after.find((c) => c.key === 'farben').cooldownMs > 0, 'cooldown set after challenge');
-ok(Core.pickChallengeOffer(st, entries, ['b1']) === null || Core.pickChallengeOffer(st, entries, ['b1']).key !== 'farben', 'offer respects cooldown');
+/* no cooldown: clusters stay available right after being played */
+const beforePlay = Core.challengeCandidates(st, entries, ['b1']).map((c) => c.key + ':' + c.startable).join();
+st.chalDone.farben = { n: 1 };
+const afterPlay = Core.challengeCandidates(st, entries, ['b1']).map((c) => c.key + ':' + c.startable).join();
+ok(beforePlay === afterPlay, 'clusters stay ready immediately after a challenge (no cooldown)');
+ok(Core.pickChallengeOffer(st, entries, ['b1']) !== null, 'offer still picks a cluster right after playing');
 
 /* import parser: mixed line + JSON-line input */
 const imp = Core.parseImport('["el gato","cat","b1"]\n["el sol","sun","a5","nope"]\nperro | dog | b1 | tiere\n');

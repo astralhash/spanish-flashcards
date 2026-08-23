@@ -1,0 +1,23 @@
+[
+["la llegada","arrival","b1","viajes"],
+["el viajero","traveler","b1","viajes"],
+["el camping","campsite","b1","viajes"],
+["el puerto","port, harbor","b1","viajes"],
+["el andén","platform","b1","viajes"],
+["la acampada","camping trip","b1","viajes"],
+["la tarjeta de embarque","boarding pass","b2","viajes"],
+["el mostrador","check-in counter","b2","viajes"],
+["el transbordo","transfer, connection","b2","viajes"],
+["el mochilero","backpacker","b2","viajes"],
+["el equipaje de mano","hand luggage","b2","viajes"],
+["el crucero","cruise","b2","viajes"],
+["el pasaje","fare, ticket","b2","viajes"],
+["el ferry","ferry","b2","viajes"],
+["la brújula","compass","b2","viajes"],
+["el equipaje facturado","checked luggage","b2","viajes"],
+["el vuelo directo","direct flight","c1","viajes"],
+["el billete de ida y vuelta","round-trip ticket","c1","viajes"],
+["el viaje organizado","package tour","c1","viajes"],
+["la maleta perdida","lost luggage","c2","viajes"],
+["la primera clase","first class","c2","viajes"]
+]

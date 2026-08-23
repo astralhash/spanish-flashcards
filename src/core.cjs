@@ -18,7 +18,17 @@
     tiere:      { label: 'Animals',  icon: '🐾', min: 10 },
     expresiones: { label: 'Expressions', icon: '💬', min: 10 },
     jerga:      { label: 'Slang & Youth', icon: '😎', min: 10 },
-    cine:       { label: 'TV & Film',  icon: '🎬', min: 10 }
+    cine:       { label: 'TV & Film',  icon: '🎬', min: 10 },
+    casa:       { label: 'Home & Furniture', icon: '🏠', min: 10 },
+    ropa:       { label: 'Clothing',  icon: '👕', min: 10 },
+    clima:      { label: 'Weather',   icon: '🌦️', min: 10 },
+    trabajo:    { label: 'Work & Office', icon: '💼', min: 10 },
+    viajes:     { label: 'Travel',    icon: '🧳', min: 10 },
+    deportes:   { label: 'Sports',    icon: '⚽', min: 10 },
+    escuela:    { label: 'School & Study', icon: '🎓', min: 10 },
+    salud:      { label: 'Health',    icon: '🩺', min: 10 },
+    tecnologia: { label: 'Tech & Internet', icon: '💻', min: 10 },
+    ocio:       { label: 'Free Time & Hobbies', icon: '🎮', min: 10 }
   };
 
   function shuffle(arr) {
@@ -41,7 +51,7 @@
       cards: {},   /* id -> { r:reps, e:ease, i:intervalDays, d:dueTs, l:lapses, added:ts } */
       xp: 0,
       total: 0, correct: 0, streak: 0, best: 0,
-      chalDone: {},   /* clusterId -> { n, last } */
+      chalDone: {},   /* clusterId -> { n } — completion counts only, no cooldown */
       custom: []      /* imported entries [ [es,en,level,cluster?], ... ] */
     };
   }
@@ -156,40 +166,37 @@
   function learned(card) { return !!(card && card.r >= 1 && card.i >= 1); }
 
   /* ---- challenges ---- */
+  /* Clusters are independent of the level selection: every defined cluster is
+     always listed with its full word count, ignoring the level chips. */
   function challengeCandidates(state, entries, levels) {
-    var now = Date.now();
-    var defs = CLUSTERS;
     var out = [];
-    for (var key in defs) {
+    for (var key in CLUSTERS) {
       var words = [];
       for (var i = 0; i < entries.length; i++) {
-        if (entries[i].cluster === key && levels.indexOf(entries[i].level) !== -1) words.push(entries[i]);
+        if (entries[i].cluster === key) words.push(entries[i]);
       }
-      if (words.length >= defs[key].min) {
-        var last = (state.chalDone[key] && state.chalDone[key].last) || 0;
-        out.push({ key: key, def: defs[key], words: words, cooldownMs: Math.max(0, last + 90 * MIN - now) });
-      }
+      out.push({ key: key, def: CLUSTERS[key], words: words, startable: words.length >= CLUSTERS[key].min });
     }
     return out;
   }
 
-  /* Random eligible cluster, or null. */
+  /* Random startable cluster, or null. No cooldowns — always available. */
   function pickChallengeOffer(state, entries, levels) {
     var ready = [];
     var cands = challengeCandidates(state, entries, levels);
-    for (var i = 0; i < cands.length; i++) if (cands[i].cooldownMs === 0) ready.push(cands[i]);
+    for (var i = 0; i < cands.length; i++) if (cands[i].startable) ready.push(cands[i]);
     if (!ready.length) return null;
     return ready[Math.floor(Math.random() * ready.length)];
   }
 
-  /* Question list for one cluster: min(10, size) words, 4 options each. */
+  /* Question list for one cluster: min(10, size) words, 4 options each.
+     Levels are ignored: a cluster challenge always draws from the whole deck. */
   function buildChallenge(state, entries, levels, key, dir, maxQ) {
     maxQ = maxQ || 10;
     var words = [];
     var pool = [];
     for (var i = 0; i < entries.length; i++) {
       var e = entries[i];
-      if (levels.indexOf(e.level) === -1) continue;
       pool.push(e);
       if (e.cluster === key) {
         var c = state.cards[e.id];

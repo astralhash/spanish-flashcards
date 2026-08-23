@@ -1,8 +1,11 @@
 /* VocabES build: merge data/*.json → validate → inline everything into a single index.html */
 import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
 
+const require = createRequire(import.meta.url);
+const Core = require('../src/core.cjs');           /* cluster registry: single source of truth */
 const TARGETS = { b1: 800, b2: 600, c1: 400, c2: 200 };
-const CLUSTERS_OK = new Set(['wochentage', 'monate', 'zahlen', 'farben', 'familie', 'essen', 'koerper', 'tiere', 'expresiones', 'jerga', 'cine']);
+const CLUSTERS_OK = new Set(Object.keys(Core.CLUSTERS));
 const LEVELS_OK = new Set(Object.keys(TARGETS));
 
 /* ---------- 1. load & validate source files ---------- */
@@ -64,6 +67,15 @@ for (const lvl of ['b1', 'b2', 'c1', 'c2']) {
 console.log('total:', total);
 
 console.log('\nclusters:', JSON.stringify(clusters));
+
+/* every defined cluster must have words — empty categories get removed entirely (see src/core.cjs) */
+for (const key of Object.keys(Core.CLUSTERS)) {
+  if (!(clusters[key] > 0)) {
+    console.error('\nEMPTY CLUSTER:', key, '— no words in any data file; remove it from src/core.cjs');
+    process.exit(1);
+  }
+}
+
 if (problems.length) {
   console.log('\n=== PROBLEMS (' + problems.length + ') ===');
   for (const p of problems.slice(0, 40)) console.log(' -', p.join('  |  '));
@@ -96,8 +108,6 @@ html = html.replace(/%%COUNT%%/g, String(total))
 const vocabJs = 'const VOCAB = ' + JSON.stringify(merged).replace(/</g, '\\u003c') + ';';
 
 /* conjugation coverage: every entry that starts with an infinitive must conjugate */
-const { createRequire } = await import('node:module');
-const require = createRequire(import.meta.url);
 const Conj = require('../src/conj.cjs');
 let conjCount = 0, conjMiss = [];
 for (const row of merged) {

@@ -32,6 +32,19 @@ await wait(250);
 /* start screen */
 ok($$('#levelChips .chip').length === 4, '4 level chips rendered');
 
+/* main menu now exposes every cluster challenge directly */
+const allClusters = Object.keys(window.Core.CLUSTERS).length;
+const menuRows = $$('#chalListStart .chal-tile');
+ok(menuRows.length === allClusters, 'main-menu lists all ' + allClusters + ' clusters');
+ok($$('#chalListStart .chal-tile:not(:disabled)').length >= 3, 'several challenges startable from the main menu');
+/* start a challenge straight from the main menu, then abort back to it */
+click(doc.querySelector('#chalListStart .chal-tile:not(:disabled)'));
+await wait(40);
+ok(!doc.querySelector('#scr-chal').hidden, 'challenge can be started from the main menu');
+click(doc.querySelector('#chQuit'));
+await wait(30);
+ok(!doc.querySelector('#scr-start').hidden, 'aborting a main-menu challenge returns to the main menu');
+
 /* disable b2 -> only b1 in session */
 click(doc.querySelector('#levelChips .chip:nth-child(2)'));
 await wait(30);
@@ -77,13 +90,13 @@ while (doc.querySelector('#scr-done').hidden && guard++ < 80) {
 }
 ok(!doc.querySelector('#scr-done').hidden, 'session complete after ' + graded + ' cards');
 
-/* done screen: challenge list */
+/* done screen: challenge list — level-independent, so all clusters are shown */
 ok(!doc.querySelector('#scr-done').hidden, 'done screen visible');
-const chalRows = $$('#chalList .chal-row');
-ok(chalRows.length >= 3, 'cluster list rendered: ' + chalRows.length + ' rows (weekdays/months/numbers/colors/family/food/body/…)');
+const chalRows = $$('#chalList .chal-tile');
+ok(chalRows.length === allClusters, 'done-screen cluster list also shows all ' + allClusters + ' clusters');
 
 /* start a challenge */
-const startBtn = doc.querySelector('#chalList .chal-row button:not(:disabled)');
+const startBtn = doc.querySelector('#chalList .chal-tile:not(:disabled)');
 if (startBtn) {
   click(startBtn);
   await wait(40);

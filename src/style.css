@@ -271,16 +271,41 @@ kbd {
 .chal-head { font-weight: 800; font-size: .95rem; align-self: flex-start; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
 .chal-head .muted { font-weight: 600; font-size: .74rem; }
 .chal-list { text-align: left; align-items: stretch; padding: 18px 20px; }
-.chal-row { display: flex; align-items: center; gap: 12px; padding: 11px 2px; border-bottom: 1px solid var(--line); }
-.chal-row:last-child { border-bottom: none; }
-.chal-icon-s { font-size: 1.4rem; width: 34px; text-align: center; }
-.chal-info { flex: 1; min-width: 0; }
-.chal-info b { display: block; font-size: .94rem; }
-.chal-info span { font-size: .74rem; color: var(--muted); }
-.chal-row button { border: none; border-radius: 12px; padding: 8px 18px; font: inherit; font-weight: 800; font-size: .84rem; cursor: pointer; background: var(--grad); color: #fff; transition: transform .12s, filter .15s; }
-.chal-row button:hover { filter: brightness(1.05); transform: translateY(-1px); }
-.chal-row button:active { transform: scale(.96); }
-.chal-row button:disabled { background: var(--surface2); color: var(--muted); border: 1px solid var(--line); cursor: default; transform: none; }
+.chal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 10px;
+  width: 100%;
+  max-height: 42dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+}
+.chal-tile {
+  border: 1px solid var(--line);
+  background: var(--surface2);
+  border-radius: 14px;
+  padding: 12px 8px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform .13s, border-color .15s, background .15s, box-shadow .2s;
+}
+.chal-tile:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  box-shadow: var(--shadow-s);
+}
+.chal-tile:active { transform: scale(.96); }
+.chal-tile .chal-tile-icon { font-size: 1.6rem; line-height: 1; }
+.chal-tile .chal-tile-name { font-weight: 800; font-size: .72rem; letter-spacing: .02em; color: var(--text); text-align: center; line-height: 1.3; }
+.chal-tile .chal-tile-sub { font-size: .64rem; font-weight: 700; color: var(--muted); }
+.chal-tile:disabled { cursor: default; opacity: .55; }
+.chal-tile:disabled:hover { transform: none; border-color: var(--line); box-shadow: none; }
 
 /* ============ modal ============ */
 .modal-back {

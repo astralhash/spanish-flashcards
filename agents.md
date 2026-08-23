@@ -82,3 +82,8 @@ to hit round totals — exceeding targets is fine.
   the merge-order priority above.
 - Don't add rows whose `es` already exists in an earlier file — pick a new
   word or fix the original instead.
+- Don't reintroduce anti-farming friction (cooldowns, replay caps, hard
+  gates) on XP or challenges: this is a local, single-user app with no
+  leaderboards or economy, so XP farming has no real benefit to anyone —
+  players may repeat anything as often as they like (cluster challenges are
+  deliberately replayable without waits).
