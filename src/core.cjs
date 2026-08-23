@@ -5,6 +5,13 @@
   var DAY = 86400000;
   var MIN = 60000;
 
+  /* Learning steps for brand-new cards (minutes): repeated short-interval
+     retrievals inside the first session(s) before a card graduates to day
+     intervals. Research (within-session repeated retrieval, e.g. SSLA 39;
+     standard SRS practice) shows new vocabulary needs several successful
+     retrievals close together to stick. */
+  var STEPS = [1, 10];
+
   var LEVELS = ['b1', 'b2', 'c1', 'c2'];
 
   var CLUSTERS = {
@@ -132,31 +139,58 @@
     };
   }
 
-  /* SM-2-ish grading. q: 0=again 1=hard 2=good 3=easy. Mutates state. */
+  /* SM-2-ish grading with learning steps. q: 0=again 1=hard 2=good 3=easy. Mutates state.
+     New cards (st != null) walk STEPS before graduating: correct answers advance a
+     step (1 min → 10 min), 'hard' repeats the current step, 'again' restarts it.
+     Graduated cards (st == null) use the classic SM-2-style intervals. */
   function applyGrade(state, id, q, now) {
     now = now || Date.now();
     var c = state.cards[id];
-    if (!c) { c = state.cards[id] = { r: 0, e: 2.5, i: 0, d: 0, l: 0, added: now }; }
-    var eff = c.e;
+    if (!c) {
+      c = state.cards[id] = { r: 0, e: 2.5, i: 0, d: 0, l: 0, added: now };
+      c.st = 0;                               /* brand-new card enters learning steps */
+    } else if (c.st == null && c.i === 0 && c.d === 0 && c.l === 0) {
+      c.st = 0;                               /* pre-update untouched card: same */
+    }
     if (q === 0) {
-      c.l += 1; c.r = 0; c.e = Math.max(1.3, eff - 0.2); c.i = 0;
-      c.d = now + 10 * MIN;                       /* reappears in ~10 min (and again this session) */
+      c.l += 1; c.r = 0; c.e = Math.max(1.3, c.e - 0.2);
+      if (c.st != null) c.d = now + STEPS[c.st] * MIN;   /* restart the current step */
+      else { c.i = 0; c.d = now + 10 * MIN; }            /* relearning for lapsed cards */
       return 'again';
-    } else if (q === 1) {
-      c.r += 1;
+    }
+    c.r += 1;
+    if (c.st != null) {
+      if (q === 1) {
+        c.d = now + STEPS[c.st] * MIN;        /* hard: repeat this step */
+        return 'hard';
+      }
+      if (q === 2) {
+        if (c.st < STEPS.length - 1) {
+          c.st += 1;
+          c.d = now + STEPS[c.st] * MIN;      /* next step */
+        } else {
+          c.st = null; c.i = 1;               /* graduate → first day interval */
+          c.d = now + DAY;
+        }
+        return 'good';
+      }
+      c.st = null; c.i = 3;                   /* easy: skip straight to 3 days */
+      c.e = Math.min(3, c.e + 0.15);
+      c.d = now + 3 * DAY;
+      return 'easy';
+    }
+    if (q === 1) {
       c.i = c.i === 0 ? 1 : Math.max(1, Math.round(c.i * 1.2));
-      c.e = Math.max(1.3, eff - 0.15);
+      c.e = Math.max(1.3, c.e - 0.15);
       c.d = now + c.i * DAY;
       return 'hard';
     } else if (q === 2) {
-      c.r += 1;
-      c.i = c.i === 0 ? 1 : Math.max(1, Math.round(c.i * eff));
+      c.i = c.i === 0 ? 1 : Math.max(1, Math.round(c.i * c.e));
       c.d = now + c.i * DAY;
       return 'good';
     } else {
-      c.r += 1;
-      c.i = c.i === 0 ? 3 : Math.max(1, Math.round(c.i * eff * 1.3));
-      c.e = Math.min(3, eff + 0.15);
+      c.i = c.i === 0 ? 3 : Math.max(1, Math.round(c.i * c.e * 1.3));
+      c.e = Math.min(3, c.e + 0.15);
       c.d = now + c.i * DAY;
       return 'easy';
     }
@@ -164,6 +198,7 @@
 
   function xpFor(q) { return q >= 2 ? 1 : 0; }
   function learned(card) { return !!(card && card.r >= 1 && card.i >= 1); }
+  function inSteps(card) { return !!(card && card.st != null); }
 
   /* ---- challenges ---- */
   /* Clusters are independent of the level selection: every defined cluster is
@@ -189,6 +224,23 @@
     return ready[Math.floor(Math.random() * ready.length)];
   }
 
+  /* One 4-option multiple-choice question about `word` in direction d,
+     with distractors drawn from the whole pool. */
+  function mcQuestion(pool, word, d) {
+    var correct = d === 'es-en' ? word.en : word.es;
+    var seen = {};
+    seen[correct.toLowerCase()] = true;
+    var opts = [correct];
+    var cand = shuffle(pool);
+    for (var p = 0; p < cand.length && opts.length < 4; p++) {
+      if (cand[p].id === word.id) continue;
+      var t = d === 'es-en' ? cand[p].en : cand[p].es;
+      var tk = t.toLowerCase();
+      if (!seen[tk]) { seen[tk] = true; opts.push(t); }
+    }
+    return { id: word.id, d: d, es: word.es, en: word.en, opts: shuffle(opts), answer: correct };
+  }
+
   /* Question list for one cluster: min(10, size) words, 4 options each.
      Levels are ignored: a cluster challenge always draws from the whole deck. */
   function buildChallenge(state, entries, levels, key, dir, maxQ) {
@@ -208,20 +260,38 @@
     for (var w = 0; w < words.length; w++) {
       var word = words[w];
       var d = dir === 'mix' ? (Math.random() < 0.5 ? 'es-en' : 'en-es') : dir;
-      var correct = d === 'es-en' ? word.en : word.es;
-      var seen = {};
-      seen[correct.toLowerCase()] = true;
-      var opts = [correct];
-      var cand = shuffle(pool);
-      for (var p = 0; p < cand.length && opts.length < 4; p++) {
-        if (cand[p].id === word.id) continue;
-        var t = d === 'es-en' ? cand[p].en : cand[p].es;
-        var tk = t.toLowerCase();
-        if (!seen[tk]) { seen[tk] = true; opts.push(t); }
-      }
-      qs.push({ id: word.id, d: d, es: word.es, en: word.en, opts: shuffle(opts), answer: correct });
+      qs.push(mcQuestion(pool, word, d));
     }
     return qs;
+  }
+
+  /* Pretest for a brand-new card: a quick forced guess before the reveal
+     (errorful generation / forward testing effect). Scheduling is untouched. */
+  function buildPretest(entries, word, d) {
+    return mcQuestion(entries, word, d);
+  }
+
+  /* ---- typed-answer matching ---- */
+  /* Accent-insensitive, punctuation-insensitive, article-tolerant comparison. */
+  function normalizeAnswer(s) {
+    return String(s == null ? '' : s)
+      .toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+  var ES_ART = /^(el|la|los|las|lo|un|una|unos|unas|der|die|das)\s+/;
+
+  function answerMatches(target, guess) {
+    var t = normalizeAnswer(target);
+    var g = normalizeAnswer(guess);
+    if (!g || g.length < 2) return false;
+    if (t === g) return true;
+    var ts = t.replace(ES_ART, '');
+    var gs = g.replace(ES_ART, '');
+    if (!ts.length || !gs.length) return false;
+    return ts === g || t === gs || ts === gs;   /* accept/ignore a leading article on either side */
   }
 
   function countLevels(vocab) {
@@ -291,9 +361,11 @@
     defaultState: defaultState, withIds: withIds, eligible: eligible,
     dueCards: dueCards, unseen: unseen, newTodayCount: newTodayCount,
     buildSession: buildSession, applyGrade: applyGrade, xpFor: xpFor, learned: learned,
+    inSteps: inSteps,
     challengeCandidates: challengeCandidates, pickChallengeOffer: pickChallengeOffer,
-    buildChallenge: buildChallenge, countLevels: countLevels, countCluster: countCluster,
-    parseImport: parseImport
+    buildChallenge: buildChallenge, buildPretest: buildPretest, countLevels: countLevels,
+    countCluster: countCluster, parseImport: parseImport,
+    normalizeAnswer: normalizeAnswer, answerMatches: answerMatches
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;

@@ -71,6 +71,30 @@ Prefs: add common speech chunks too (`por favor`, `lo siento`, `a lo mejor`),
 keep every word at its natural frequency band, and don't trim good words purely
 to hit round totals — exceeding targets is fine.
 
+## SRS & answer mechanics (don't regress these)
+
+- **Learning steps**: brand-new cards carry `st` (index into `STEPS = [1, 10]`
+  minutes) and only graduate to day intervals after passing the last step —
+  'good' advances a step, 'hard' repeats it, 'again' restarts it; lapsed
+  (already-graduated) cards keep the classic 10-min relearning → 1-day path.
+  Scheduling lives in `applyGrade` in `src/core.cjs`; tests in `scripts/smoke.mjs`.
+- **Answer style setting** `settings.ans`: `'type'` (default) | `'mix'` | `'flip'`.
+  Mix randomly picks typed vs. flashcard per card (challenge questions get a
+  fixed `q.typed` flag at build time). Flashcard rounds may show a 4-option
+  **pretest** for never-seen cards (`settings.pretest`) — the pretest never
+  touches SRS state.
+- **Typed matching**: `Core.answerMatches`/`Core.normalizeAnswer` are
+  accent-insensitive, punctuation-insensitive and article-tolerant; the UI
+  (`typedMatch` in `src/app.js`) additionally accepts any conjugated form of
+  a target infinitive via `Conj.table`.
+- **Reveals**: on check/peek the panel collapses to `question = answer` and
+  *holds* — advancing requires clicking, Space or Enter (correct = graded
+  'good', miss/peek = 'again'). Nothing auto-speaks: audio only plays via the
+  🔊 buttons/chips (`settings.tts`, browser speech synthesis).
+- Failed cards are re-queued once per session (`sess.revoked`) and recorded in
+  the "words to watch" recap; challenges replay missed items once in a final
+  round (`challenge.missed`/`allMissed`, one replay round max).
+
 ## Do / Don't
 
 - Do edit `src/` + `data/`, then rebuild `index.html`, then run all four

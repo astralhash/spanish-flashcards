@@ -52,7 +52,7 @@
       <div id="chalListStart" class="chal-grid"></div>
     </div>
 
-    <p class="foot-note">SM-2 spaced repetition · all progress is saved locally in your browser · %%COUNT%% built-in words, extendable via <b>Settings → Import</b> · Tip: keys <kbd>Space</kbd> reveal, <kbd>1</kbd>–<kbd>4</kbd> grade.</p>
+    <p class="foot-note">Spaced repetition with learning steps · all progress is saved locally in your browser · %%COUNT%% built-in words, extendable via <b>Settings → Import</b> · Tip: typed answers ignore accents & articles; in Flashcard mode <kbd>Space</kbd> reveals and <kbd>1</kbd>–<kbd>4</kbd> grade.</p>
   </section>
 
   <!-- ================= QUIZ ================= -->
@@ -63,6 +63,16 @@
     </div>
     <div class="qbar"><div id="qbarFill"></div></div>
 
+    <div id="pretestPanel" class="card type-panel" hidden>
+      <div class="sub small pre-label">🔮 New word — take a guess first</div>
+      <div id="preWord" class="word"></div>
+      <div id="preOpts" class="opts"></div>
+      <div id="preFb" class="type-fb" hidden>
+        <div class="reveal-row"><span id="preFbQ" class="reveal-q"></span><span class="reveal-eq">=</span><span id="preFbA" class="reveal-a"></span></div>
+      </div>
+      <div id="preSay" class="say-chip" hidden>🔊 Say it aloud</div>
+    </div>
+
     <div id="flip" class="flipcard" tabindex="0" role="button" aria-label="Flashcard — show answer">
       <div class="face front">
         <div class="badges">
@@ -72,6 +82,7 @@
         </div>
         <div id="frontWord" class="word"></div>
         <div class="hint">Click card or press <kbd>Space</kbd> to reveal</div>
+        <div id="frontChip" class="say-chip" hidden>🔊 Say it aloud</div>
       </div>
       <div class="face back">
         <div class="badges"><span class="badge">answer</span></div>
@@ -83,7 +94,22 @@
           <button class="g g-easy" data-q="3"><kbd>4</kbd> Easy</button>
         </div>
         <div class="hint hb"><kbd>1</kbd> again → returns this session</div>
+        <div id="sayChip" class="say-chip" hidden>🔊 Say it aloud</div>
       </div>
+    </div>
+
+    <div id="typePanel" class="card type-panel" hidden>
+      <div id="typeDir" class="sub small"></div>
+      <div id="typeWord" class="word"></div>
+      <input id="typeInput" class="type-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Type your answer…" enterkeyhint="done">
+      <div class="type-actions" id="typeActions">
+        <button id="typeCheck" class="secondary">Check</button>
+        <button id="typePeek" class="ghost">Show answer</button>
+      </div>
+      <div id="typeFb" class="type-fb" hidden>
+        <div class="reveal-row"><span id="typeFbQ" class="reveal-q"></span><span class="reveal-eq">=</span><span id="typeFbA" class="reveal-a"></span></div>
+      </div>
+      <button id="typeNext" class="secondary type-next" hidden>Continue → <kbd>Space</kbd></button>
     </div>
   </section>
 
@@ -92,6 +118,8 @@
     <div class="card hero">
       <h2 id="doneTitle">Session complete 🎉</h2>
       <div id="doneStats" class="stats big"></div>
+
+      <div class="say-tip" id="doneTip" hidden>🌙 A little review now — ideally before bed — helps your brain consolidate tonight's words.</div>
 
       <div id="chalOffer" class="chal-offer" hidden>
         <div class="chal-offer-txt"><span class="chal-icon">⚡</span><div><b id="chalOfferTitle">Cluster challenge</b><div class="sub small">A short burst of ~10 words from one cluster</div></div></div>
@@ -102,6 +130,12 @@
         <button id="againBtn" class="secondary">▶&nbsp; Another round</button>
         <button id="homeBtn" class="ghost">Home</button>
       </div>
+    </div>
+
+    <div id="recapBox" class="card recap" hidden>
+      <div class="chal-head">🔍 Words to watch <span class="muted">(missed this session — your brain learns fastest from errors)</span></div>
+      <div id="recapList" class="recap-list"></div>
+      <button id="recapPractice" class="secondary">Practice these now</button>
     </div>
 
     <div class="card chal-list">
@@ -123,6 +157,17 @@
       <div id="chDir" class="sub small"></div>
       <div id="chWord" class="word"></div>
       <div id="chOpts" class="opts"></div>
+      <div id="chTypeWrap" class="type-panel slim" hidden>
+        <input id="chTypeInput" class="type-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Type your answer…" enterkeyhint="done">
+        <div class="type-actions" id="chTypeActions">
+          <button id="chTypeCheck" class="secondary">Check</button>
+          <button id="chTypePeek" class="ghost">Show answer</button>
+        </div>
+        <div id="chTypeFb" class="type-fb" hidden>
+          <div class="reveal-row"><span id="chTypeFbQ" class="reveal-q"></span><span class="reveal-eq">=</span><span id="chTypeFbA" class="reveal-a"></span></div>
+        </div>
+        <button id="chTypeNext" class="secondary type-next" hidden>Continue → <kbd>Space</kbd></button>
+      </div>
     </div>
   </section>
 
@@ -136,6 +181,10 @@
         <button id="chdHome" class="ghost">Home</button>
       </div>
     </div>
+    <div id="chdRecap" class="card recap" hidden>
+      <div class="chal-head">🔍 Words to watch <span class="muted">(missed in this challenge)</span></div>
+      <div id="chdRecapList" class="recap-list"></div>
+    </div>
   </section>
 </main>
 
@@ -148,6 +197,17 @@
         <div class="range-row"><input type="range" id="setNew" min="5" max="60" step="5"><span id="setNewVal" class="muted"></span></div>
       </label>
       <label class="field check"><input type="checkbox" id="setSound"> Sounds</label>
+
+      <div class="lbl">Answer style</div>
+      <div class="seg" id="ansSeg">
+        <button data-ans="type">✏️ Type it</button>
+        <button data-ans="mix">🔀 Mixed</button>
+        <button data-ans="flip">🃏 Flashcard</button>
+      </div>
+      <p class="muted small">Typing makes you <i>produce</i> the answer — retention research (the generation effect) shows it beats recognition. <b>Mixed</b> alternates both formats within one run. Flashcard rounds offer a 4-option guess for new words first.</p>
+
+      <label class="field check"><input type="checkbox" id="setPretest"> Guess new words first (4-option pretest in Flashcard mode)</label>
+      <label class="field check"><input type="checkbox" id="setTts"> Speak Spanish out loud (text-to-speech)</label>
 
       <label class="field">Import words <span class="muted">— make the deck yours (saved in this browser)</span>
         <textarea id="importArea" rows="6" spellcheck="false" placeholder='JSON array, e.g. [["el gato","cat","b1"]]  — or one per line:  el gato | cat | b1   (optional 4th column: cluster id — wochentage, monate, zahlen, farben, familie, essen, koerper, tiere, expresiones, jerga, cine)'></textarea>

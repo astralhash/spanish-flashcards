@@ -25,8 +25,8 @@
   function loadSettings() {
     try {
       var s = JSON.parse(localStorage.getItem(LS_KEY + '.set') || '{}');
-      return Object.assign({ levels: ['b1', 'b2'], dir: 'es-en', newPerDay: 20, sound: true, theme: null }, s);
-    } catch (e) { return { levels: ['b1', 'b2'], dir: 'es-en', newPerDay: 20, sound: true, theme: null }; }
+      return Object.assign({ levels: ['b1', 'b2'], dir: 'es-en', newPerDay: 20, sound: true, theme: null, ans: 'type', pretest: true, tts: true }, s);
+    } catch (e) { return { levels: ['b1', 'b2'], dir: 'es-en', newPerDay: 20, sound: true, theme: null, ans: 'type', pretest: true, tts: true }; }
   }
   function saveSettings() { try { localStorage.setItem(LS_KEY + '.set', JSON.stringify(settings)); } catch (e) {} }
   function loadState() {
@@ -53,10 +53,10 @@
 
   /* Gender-colored articles for Spanish words. */
   var ART_RE = /^((?:el|la|los|las|lo|un|una|unos|unas|der|die|das)\s+)(.*)$/i;
-  function renderWord(node, txt, isEs) {
+  function renderWord(node, txt, isEs, noTag) {
     node.textContent = '';
     /* mark Spanish verbs: hovering them shows a live conjugation card */
-    if (isEs && CJ) {
+    if (isEs && CJ && !noTag) {
       var cj = CJ.analyze(txt);
       if (cj) { node.dataset.conj = txt; node.classList.add('verbal'); hideConj(); }
       else { node.removeAttribute('data-conj'); node.classList.remove('verbal'); }
@@ -77,6 +77,8 @@
     } else {
       node.textContent = txt;
     }
+    /* speak button on Spanish words when pronunciation is enabled */
+    if (isEs && settings.tts) node.appendChild(sayBtn(txt));
   }
 
   /* ---------------- conjugation hover card ---------------- */
@@ -211,6 +213,85 @@
   function sndBad() { if (settings.sound) beep(190, .2, 'triangle', .08); }
   function sndTic() { if (settings.sound) beep(440, .045, 'sine', .04); }
 
+  /* ---- speech (text-to-speech) + production prompts ---- */
+  /* The production effect: saying words aloud (or at least hearing them right
+     after a recall attempt) strengthens memory for the spoken form. */
+  var esVoice = null;
+  function pickEsVoice() {
+    try {
+      if (!window.speechSynthesis) return null;
+      var vs = window.speechSynthesis.getVoices() || [];
+      for (var i = 0; i < vs.length; i++) {
+        if (String(vs[i].lang || '').toLowerCase().indexOf('es') === 0) return vs[i];
+      }
+    } catch (e) { /* no voices */ }
+    return null;
+  }
+  if (typeof window !== 'undefined' && window.speechSynthesis && window.speechSynthesis.onvoiceschanged !== undefined) {
+    window.speechSynthesis.onvoiceschanged = function () { esVoice = pickEsVoice(); };
+  }
+  function speak(text) {
+    if (!settings.tts) return;
+    try {
+      if (!window.speechSynthesis) return;
+      var u = new SpeechSynthesisUtterance(String(text));
+      u.lang = 'es-ES';
+      u.rate = 0.92;
+      if (!esVoice) esVoice = pickEsVoice();
+      if (esVoice) u.voice = esVoice;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(u);
+    } catch (e) { /* speech unavailable */ }
+  }
+  function sayBtn(text) {
+    var b = el('button', 'say-btn', '🔊');
+    b.setAttribute('aria-label', 'Pronounce: ' + text);
+    b.title = 'Pronounce';
+    b.addEventListener('click', function (ev) {
+      if (ev) ev.stopPropagation();
+      speak(text);
+    });
+    return b;
+  }
+  /* Show/hide a "say it aloud" chip that speaks `word` when clicked.
+     Showing it does not depend on the tts setting — it is a human nudge. */
+  function armChip(node, word) {
+    if (!node) return;
+    if (!word) { node.hidden = true; return; }
+    node._word = word;
+    node.hidden = false;
+  }
+
+  /* ---- typed-answer matching ---- */
+  function typedMatch(target, guess) {
+    if (C.answerMatches(target, guess)) return true;
+    /* verb tolerance: accept a conjugated form of the target infinitive */
+    if (!CJ) return false;
+    try {
+      var t = CJ.analyze(target);
+      if (!t || t.reflex) return false;           /* reflexives typed with particle — keep strict */
+      var tbl = CJ.table(target);
+      if (!tbl) return false;
+      var g = C.normalizeAnswer(guess);
+      var fm;
+      for (var i = 0; i < tbl.tenses.length; i++) {
+        var rows = tbl.tenses[i].rows;
+        for (var k = 0; k < rows.length; k++) {
+          fm = C.normalizeAnswer(rows[k][1]);
+          if (fm === g) return true;
+        }
+      }
+      if (tbl.gerund && C.normalizeAnswer(tbl.gerund) === g) return true;
+      if (tbl.participle && C.normalizeAnswer(tbl.participle) === g) return true;
+      if (tbl.imperative) {
+        for (var p in tbl.imperative) {
+          if (tbl.imperative[p] && C.normalizeAnswer(tbl.imperative[p]) === g) return true;
+        }
+      }
+    } catch (e) { return false; }
+    return false;
+  }
+
   /* ---------------- theme ---------------- */
   var mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
   function applyTheme() {
@@ -279,17 +360,65 @@
   }
 
   /* ---------------- review session ---------------- */
-  function startSession() {
-    var s = C.buildSession(state, entries(), settings.levels, settings.newPerDay);
-    sess = { ids: s.ids, total: s.total, i: 0, correct: 0, xp: 0, best: 0, revoked: new Set(), skippedDue: s.skippedDue };
+  function startSession(forcedIds) {
+    if (!Array.isArray(forcedIds)) forcedIds = null;   /* click events land here too */
+    var s = forcedIds
+      ? { ids: forcedIds.slice(), total: forcedIds.length, dueCount: 0, newCount: 0, skippedDue: 0 }
+      : C.buildSession(state, entries(), settings.levels, settings.newPerDay);
+    if (forcedIds && !forcedIds.length) { toast('Nothing to practice'); return; }
+    sess = {
+      ids: s.ids, total: s.total, i: 0, correct: 0, xp: 0, best: 0,
+      revoked: new Set(), skippedDue: s.skippedDue,
+      missed: [], pre: null, preLocked: false, typed: 'idle', curDir: settings.dir
+    };
     if (s.total === 0) { renderDone(s.skippedDue ? 'All caught up — the rest awaits tomorrow ⏳' : 'Nothing due right now 🎉', 0); return; }
     show('scr-quiz');
     renderCard();
   }
 
+  /* a card the learner has never seen at all (no state, or untouched) */
+  function neverSeen(e) {
+    var c = state.cards[e.id];
+    return !c || (c.r === 0 && c.l === 0 && c.d === 0);
+  }
+
+  function setQuizVisibility(which) {        /* 'pre' | 'flip' | 'type' */
+    $('#pretestPanel').hidden = which !== 'pre';
+    $('#flip').hidden = which !== 'flip';
+    $('#typePanel').hidden = which !== 'type';
+  }
+
   function renderCard() {
     var e = entryById(sess.ids[sess.i]);
     hideConj();
+    armChip($('#frontChip'), null);
+    armChip($('#sayChip'), null);
+    armChip($('#preSay'), null);
+
+    var card = state.cards[e.id];
+    $('#newBadge').hidden = !(card ? (card.r === 0 || C.inSteps(card)) : true);
+
+    $('#lvlBadge').hidden = true;   /* the word's level is irrelevant while reviewing */
+    if (e.cluster && C.CLUSTERS[e.cluster]) {
+      $('#clsBadge').textContent = C.CLUSTERS[e.cluster].icon + ' ' + C.CLUSTERS[e.cluster].label;
+      $('#clsBadge').hidden = false;
+    } else { $('#clsBadge').hidden = true; }
+
+    $('#qcount').textContent = (sess.i + 1) + ' / ' + sess.total;
+    $('#qbarFill').style.width = (sess.i / sess.total * 100) + '%';
+
+    sess.curDir = dirOf();
+    var useType = settings.ans === 'type' || (settings.ans === 'mix' && Math.random() < 0.5);
+    if (useType) { renderTypeCard(e); return; }
+    if (settings.pretest && neverSeen(e)) { renderPretest(e); return; }
+    renderFlipCard(e);
+  }
+
+  /* ---------- flashcard mode ---------- */
+  function renderFlipCard(e) {
+    var dir = sess.curDir;
+    var front = dir === 'es-en' ? e.es : e.en;
+    var back = dir === 'es-en' ? e.en : e.es;
     var flip = $('#flip');
     flip.classList.remove('flipped', 'reload');
     flip.style.transition = 'none';
@@ -297,39 +426,180 @@
     flip.style.transition = '';
     void flip.offsetWidth;
     flip.classList.add('reload');
-
-    var dir = dirOf();
-    var front = dir === 'es-en' ? e.es : e.en;
-    var back = dir === 'es-en' ? e.en : e.es;
-
     renderWord($('#frontWord'), front, dir === 'es-en');
     renderWord($('#backWord'), back, dir === 'en-es');
     $('#frontWord').parentNode.querySelector('.hint').textContent =
+      (settings.ans === 'mix' ? '🃏 ' : '') +
       (dir === 'es-en' ? 'Spanish → English' : 'English → Spanish') + ' · click or press Space to reveal';
-
-    $('#lvlBadge').hidden = true;   /* the word's level is irrelevant while reviewing */
-    if (e.cluster && C.CLUSTERS[e.cluster]) {
-      $('#clsBadge').textContent = C.CLUSTERS[e.cluster].icon + ' ' + C.CLUSTERS[e.cluster].label;
-      $('#clsBadge').hidden = false;
-    } else { $('#clsBadge').hidden = true; }
-    var card = state.cards[e.id];
-    $('#newBadge').hidden = !(card ? card.r === 0 : true);
-
-    $('#qcount').textContent = (sess.i + 1) + ' / ' + sess.total;
-    $('#qbarFill').style.width = (sess.i / sess.total * 100) + '%';
+    if (dir === 'es-en') armChip($('#frontChip'), e.es);   /* production prompt while the Spanish is visible */
+    setQuizVisibility('flip');
   }
 
-  function flipCard() { $('#flip').classList.toggle('flipped'); }
+  function flipCard() {
+    var flip = $('#flip');
+    var willShow = !flip.classList.contains('flipped');
+    flip.classList.toggle('flipped');
+    /* the reveal moment: if the revealed side is Spanish, offer the say-aloud chip
+       (audio only plays when the chip is clicked) */
+    if (willShow && sess && sess.curDir === 'en-es') {
+      var e = entryById(sess.ids[sess.i]);
+      if (e) armChip($('#sayChip'), e.es);
+    }
+  }
+
+  /* ---------- pretest (new words, flashcard mode) ---------- */
+  function renderPretest(e) {
+    var q = C.buildPretest(entries(), e, sess.curDir);
+    sess.pre = q; sess.preLocked = false;
+    $('#preFb').hidden = true;
+    armChip($('#preSay'), null);
+    renderWord($('#preWord'), q.d === 'es-en' ? q.es : q.en, false, true);
+    var wrap = $('#preOpts');
+    wrap.textContent = '';
+    q.opts.forEach(function (opt, idx) {
+      var b = el('button', null, '');
+      renderWord(b, opt);
+      b.addEventListener('click', function () { preAnswer(idx); });
+      wrap.appendChild(b);
+    });
+    setQuizVisibility('pre');
+  }
+
+  function preAnswer(idx) {
+    if (!sess || !sess.pre || sess.preLocked) return;
+    sess.preLocked = true;
+    var q = sess.pre;
+    var btns = $$('#preOpts button');
+    var chosen = btns[idx];
+    var ok = chosen.textContent.trim().toLowerCase() === q.answer.trim().toLowerCase();
+    if (ok) {
+      chosen.classList.add('right');
+      sndGood();
+      revealPair($('#preFb'), $('#preFbQ'), $('#preFbA'), q.es, q.en, q.d, 'ok');
+    } else {
+      chosen.classList.add('wrong');
+      sndBad();
+      revealPair($('#preFb'), $('#preFbQ'), $('#preFbA'), q.es, q.en, q.d, 'miss');
+      for (var i = 0; i < btns.length; i++) {
+        if (btns[i].textContent.trim().toLowerCase() === q.answer.trim().toLowerCase()) { btns[i].classList.add('right'); break; }
+      }
+    }
+    btns.forEach(function (b) { b.classList.add('lock'); });
+    armChip($('#preSay'), q.es);
+    setTimeout(function () {
+      if (!sess) return;
+      /* reveal the card with the answer side up → the learner rates at once */
+      var flip = $('#flip');
+      flip.classList.add('flipped');
+      setQuizVisibility('flip');
+      if (q.d === 'en-es') armChip($('#sayChip'), q.es);
+      sess.pre = null;
+    }, 1150);
+  }
+
+  /* ---------- typed mode ---------- */
+  var TYPE_ASK = ['#typeDir', '#typeWord', '#typeInput', '#typeActions'];
+  /* 'ask': show the question, input and actions.
+     'reveal': show ONLY the "question = answer" row (and the Continue button). */
+  function setTypeMode(ask) {
+    TYPE_ASK.forEach(function (sel) {
+      var n = document.querySelector(sel);
+      if (n) n.hidden = !ask;
+    });
+  }
+
+  function renderTypeCard(e) {
+    var dir = sess.curDir;
+    $('#typeDir').textContent =
+      (settings.ans === 'mix' ? '✏️ ' : '') +
+      (dir === 'es-en' ? 'Spanish → type the English meaning' : 'English → type the Spanish word') +
+      ' · accents & articles optional';
+    renderWord($('#typeWord'), dir === 'es-en' ? e.es : e.en, dir === 'es-en');
+    var inp = $('#typeInput');
+    inp.value = ''; inp.disabled = false;
+    $('#typeCheck').disabled = false;
+    $('#typeFb').hidden = true;
+    $('#typeNext').hidden = true;
+    sess.typed = 'idle';
+    setTypeMode(true);
+    setQuizVisibility('type');
+    if (window.matchMedia && window.matchMedia('(pointer: fine)').matches) inp.focus();
+  }
+
+  function typeTarget(e, dir) { return dir === 'es-en' ? e.en : e.es; }
+
+  /* Simple reveal: "question word = correct answer" in one row, answer prominent.
+     The play button rides on the Spanish side; nothing speaks automatically.
+     state: 'ok' (green answer) | 'miss' (red answer) | 'peek' (neutral). */
+  function fillReveal(node, txt, withPlay) {
+    node.textContent = '';
+    node.appendChild(document.createTextNode(txt));
+    if (withPlay) node.appendChild(sayBtn(txt));
+  }
+
+  function revealPair(fb, qEl, aEl, es, en, dir, state) {
+    fb.hidden = false;
+    fb.classList.remove('fb-ok', 'fb-bad');
+    if (state === 'ok') fb.classList.add('fb-ok');
+    else if (state === 'miss') fb.classList.add('fb-bad');
+    var q = dir === 'es-en' ? es : en;      /* the question word as shown */
+    var a = dir === 'es-en' ? en : es;      /* the correct answer */
+    fillReveal(qEl, q, dir === 'es-en');
+    fillReveal(aEl, a, dir === 'en-es');
+  }
+
+  function revealType(e, dir, state) {
+    setTypeMode(false);                       /* hide the question/input/actions — reveal only */
+    revealPair($('#typeFb'), $('#typeFbQ'), $('#typeFbA'), e.es, e.en, dir, state);
+    if (state === 'ok') sndGood(); else if (state === 'miss') sndBad();
+  }
+
+  /* every typed outcome stays on screen until the learner says so:
+     click anywhere, Space or Enter → graded ('good' when correct, 'again' otherwise) */
+  function awaitType() {
+    $('#typeNext').hidden = false;
+  }
+
+  function continueTyped() {
+    if (!sess || sess.typed === 'idle') return;
+    grade(sess.typed === 'ok' ? 2 : 0);
+  }
+
+  function checkType() {
+    if (!sess || sess.typed !== 'idle') return;
+    var e = entryById(sess.ids[sess.i]);
+    var dir = sess.curDir;
+    var guess = $('#typeInput').value;
+    if (!guess.trim()) return;
+    var ok = typedMatch(typeTarget(e, dir), guess);
+    sess.typed = ok ? 'ok' : 'miss';
+    $('#typeInput').disabled = true;
+    $('#typeCheck').disabled = true;
+    revealType(e, dir, ok ? 'ok' : 'miss');
+    awaitType();
+  }
+
+  function peekType() {
+    if (!sess || sess.typed !== 'idle') return;
+    var e = entryById(sess.ids[sess.i]);
+    sess.typed = 'peek';
+    $('#typeInput').disabled = true;
+    $('#typeCheck').disabled = true;
+    revealType(e, sess.curDir, 'peek');
+    awaitType();
+  }
 
   function grade(q) {
     if (!sess) return;
     var id = sess.ids[sess.i];
-    var before = state.cards[id];
     var res = C.applyGrade(state, id, q);
     state.total++;
     if (q === 0) {
       state.streak = 0;
       if (!sess.revoked.has(id)) { sess.revoked.add(id); sess.ids.push(id); sess.total++; }
+      /* remember for the "words to watch" recap */
+      var e = entryById(id);
+      if (e && !sess.missed.some(function (m) { return m.id === id; })) sess.missed.push({ id: id, es: e.es, en: e.en });
       sndBad();
     } else {
       state.correct++;
@@ -346,12 +616,39 @@
     sess.i++;
     if (sess.i >= sess.ids.length) endSession();
     else renderCard();
-    if (before && res === 'again') toast('Back into the queue — you will see it again this session');
+    if (res === 'again') toast('Back into the queue — you will see it again this session');
+    else if (C.inSteps(state.cards[id])) toast('New word — another quick pass later this session');
   }
 
   function endSession() {
     var reviewed = sess.i;
     renderDone('Session complete 🎉', reviewed);
+  }
+
+  /* ---------- recap: missed words ---------- */
+  function renderRecap(list, listId, boxId) {
+    var box = document.getElementById(boxId || 'recapBox');
+    var wrap = document.getElementById(listId || 'recapList');
+    wrap.textContent = '';
+    if (!list || !list.length) { box.hidden = true; return; }
+    list.forEach(function (m) {
+      var row = el('div', 'recap-item');
+      row.appendChild(el('span', 'recap-es', m.es));
+      row.appendChild(el('span', 'muted', ' — ' + m.en));
+      row.appendChild(sayBtn(m.es));
+      wrap.appendChild(row);
+    });
+    box.hidden = false;
+  }
+
+  function practiceMissed() {
+    if (!sess || !sess.missed) return;
+    var seen = {};
+    var ids = [];
+    sess.missed.forEach(function (m) {
+      if (!seen[m.id]) { seen[m.id] = true; ids.push(m.id); }
+    });
+    startSession(ids.slice(0, 25));
   }
 
   /* ---------------- done screen ---------------- */
@@ -362,6 +659,9 @@
     $('#doneStats').appendChild(statBox('✅', 'Correct', sess && sess.total ? Math.round(sess.correct / sess.total * 100) + '%' : '—'));
     $('#doneStats').appendChild(statBox('★', 'XP gained', sess ? sess.xp : 0));
     $('#doneStats').appendChild(statBox('🔥', 'Best streak', sess ? sess.best : state.best));
+
+    renderRecap(sess && sess.missed, 'recapList', 'recapBox');
+    $('#doneTip').hidden = !(reviewed > 0);
 
     /* sometimes a challenge pops up */
     var offer = C.pickChallengeOffer(state, entries(), settings.levels);
@@ -394,12 +694,20 @@
 
   /* ---------------- cluster challenge ---------------- */
   function startChallenge(key) {
+    var qs = C.buildChallenge(state, entries(), settings.levels, key, settings.dir);
+    /* per-question answer format fixed at build time (matters in Mixed mode:
+       a replayed question keeps the format it was asked in) */
+    qs.forEach(function (q) {
+      q.typed = settings.ans === 'type' || (settings.ans === 'mix' && Math.random() < 0.5);
+    });
     challenge = {
       key: key,
-      qs: C.buildChallenge(state, entries(), settings.levels, key, settings.dir),
-      i: 0, correct: 0, streak: 0, best: 0, xp: 0, locked: false
+      qs: qs,
+      i: 0, correct: 0, streak: 0, best: 0, xp: 0, locked: false,
+      mainLen: qs.length, asked: qs.length, round: 0,
+      missed: [], allMissed: [], chInput: false, waiting: false
     };
-    if (!challenge.qs.length) { toast('Not enough words in this cluster yet'); return; }
+    if (!qs.length) { toast('Not enough words in this cluster yet'); return; }
     var def = C.CLUSTERS[key];
     $('#chCluster').textContent = def.icon + ' ' + def.label;
     show('scr-chal');
@@ -407,20 +715,51 @@
     sndTic();
   }
 
+  /* typed round chrome: question + input + actions (ask) vs. only the reveal row */
+  function setChalAskMode(ask) {
+    $('#chDir').hidden = !ask;
+    $('#chWord').hidden = !ask;
+    $('#chTypeInput').hidden = !ask;
+    $('#chTypeActions').hidden = !ask;
+  }
+
   function renderChalQ() {
     var q = challenge.qs[challenge.i];
     hideConj();
-    $('#chDir').textContent = q.d === 'es-en' ? 'Spanish → English' : 'English → Spanish';
-    /* challenge words/options stay untagged: no conjugation card in the 4-answer flash rounds */
-    renderWord($('#chWord'), q.d === 'es-en' ? q.es : q.en);
+    $('#chDir').textContent =
+      (settings.ans === 'mix' ? (q.typed ? '✏️ ' : '🃏 ') : '') +
+      (q.d === 'es-en' ? 'Spanish → English' : 'English → Spanish') + (q.typed ? ' · type your answer' : '');
+    /* challenge words stay untagged: no conjugation card in these rounds */
+    renderWord($('#chWord'), q.d === 'es-en' ? q.es : q.en, q.d === 'es-en', true);
     var wrap = $('#chOpts');
     wrap.textContent = '';
-    q.opts.forEach(function (opt, idx) {
-      var b = el('button', null, '');
-      renderWord(b, opt);
-      b.addEventListener('click', function () { answer(idx); });
-      wrap.appendChild(b);
-    });
+    var tw = $('#chTypeWrap');
+    var inp = $('#chTypeInput');
+    var fb = $('#chTypeFb');
+    setChalAskMode(true);                       /* back to the ask layout for every new question */
+    if (q.typed) {
+      wrap.hidden = true;
+      tw.hidden = false;
+      inp.value = ''; inp.disabled = false;
+      $('#chTypeCheck').disabled = false;
+      $('#chTypeNext').hidden = true;
+      fb.hidden = true;
+      fb.classList.remove('fb-ok', 'fb-bad');
+      challenge.chInput = true;
+      challenge.waiting = false;
+      if (window.matchMedia && window.matchMedia('(pointer: fine)').matches) inp.focus();
+    } else {
+      wrap.hidden = false;
+      tw.hidden = true;
+      challenge.chInput = false;
+      challenge.waiting = false;
+      q.opts.forEach(function (opt, idx) {
+        var b = el('button', null, '');
+        renderWord(b, opt);
+        b.addEventListener('click', function () { chAnswer(idx); });
+        wrap.appendChild(b);
+      });
+    }
     $('#chCount').textContent = (challenge.i + 1) + ' / ' + challenge.qs.length;
     $('#chBarFill').style.width = (challenge.i / challenge.qs.length * 100) + '%';
     var card = $('#chal-q-card');
@@ -428,7 +767,7 @@
     challenge.locked = false;
   }
 
-  function answer(idx) {
+  function chAnswer(idx) {
     if (!challenge || challenge.locked) return;
     challenge.locked = true;
     var q = challenge.qs[challenge.i];
@@ -446,19 +785,93 @@
       for (var i = 0; i < btns.length; i++) {
         if (btns[i].textContent.trim().toLowerCase() === q.answer.trim().toLowerCase()) { btns[i].classList.add('right'); break; }
       }
+      challenge.missed.push(q);
+      pushMissed(q);
       sndBad();
     }
     btns.forEach(function (b) { b.classList.add('lock'); });
-    setTimeout(function () {
-      if (!challenge) return;                    /* aborted meanwhile */
-      challenge.i++;
-      if (challenge.i >= challenge.qs.length) finishChallenge();
-      else renderChalQ();
-    }, 520);
+    setTimeout(chAdvance, 620);
+  }
+
+  /* Prominent reveal for typed challenge answers — same pair row as the review. */
+  function revealChal(q, state) {
+    setChalAskMode(false);                    /* only the reveal row remains on screen */
+    revealPair($('#chTypeFb'), $('#chTypeFbQ'), $('#chTypeFbA'), q.es, q.en, q.d, state);
+    if (state === 'ok') sndGood(); else if (state === 'miss') sndBad();
+  }
+
+  function chCheckType() {
+    if (!challenge || challenge.locked || !challenge.chInput) return;
+    var q = challenge.qs[challenge.i];
+    var guess = $('#chTypeInput').value;
+    if (!guess.trim()) { $('#chTypeInput').focus(); return; }
+    challenge.locked = true;
+    challenge.chInput = false;
+    var target = q.d === 'es-en' ? q.en : q.es;
+    var ok = typedMatch(target, guess);
+    $('#chTypeInput').disabled = true;
+    $('#chTypeCheck').disabled = true;
+    if (ok) {
+      challenge.correct++; challenge.streak++;
+      challenge.best = Math.max(challenge.best, challenge.streak);
+    } else {
+      challenge.streak = 0;
+      challenge.missed.push(q);
+      pushMissed(q);
+    }
+    revealChal(q, ok ? 'ok' : 'miss');
+    challenge.waiting = true;          /* every typed outcome waits for click/Space/Enter */
+    $('#chTypeNext').hidden = false;
+  }
+
+  function chPeekType() {
+    if (!challenge || challenge.locked || !challenge.chInput) return;
+    var q = challenge.qs[challenge.i];
+    challenge.locked = true;
+    challenge.chInput = false;
+    challenge.streak = 0;
+    challenge.missed.push(q);
+    pushMissed(q);
+    revealChal(q, 'peek');
+    $('#chTypeInput').disabled = true;
+    $('#chTypeCheck').disabled = true;
+    challenge.waiting = true;
+    $('#chTypeNext').hidden = false;
+  }
+
+  function continueChalTyped() {
+    if (!challenge || !challenge.waiting) return;
+    challenge.waiting = false;
+    chAdvance();
+  }
+
+  function pushMissed(q) {
+    if (!challenge.allMissed.some(function (m) { return m.id === q.id; })) challenge.allMissed.push(q);
+  }
+
+  function chAdvance() {
+    if (!challenge) return;                    /* aborted meanwhile */
+    challenge.i++;
+    if (challenge.i >= challenge.qs.length) {
+      /* one replay round of the missed items — errors get re-attempted, then we stop */
+      if (challenge.round === 0 && challenge.missed.length) {
+        var replay = challenge.missed.slice();
+        challenge.missed = [];
+        challenge.round = 1;
+        challenge.i = 0;
+        challenge.qs = C.shuffle(replay);
+        challenge.asked += challenge.qs.length;
+        renderChalQ();
+        return;
+      }
+      finishChallenge();
+      return;
+    }
+    renderChalQ();
   }
 
   function finishChallenge() {
-    var n = challenge.qs.length;
+    var asked = challenge.asked;
     var xp = 10 + 2 * challenge.correct + (challenge.best >= 8 ? 10 : challenge.best >= 5 ? 5 : 0);
     state.xp += xp;
     var prev = state.chalDone[challenge.key] || { n: 0 };
@@ -468,17 +881,28 @@
 
     $('#chdTitle').textContent = 'Challenge complete';
     $('#chdStats').textContent = '';
-    $('#chdStats').appendChild(statBox('🎯', 'Score', challenge.correct + ' / ' + n));
+    $('#chdStats').appendChild(statBox('🎯', 'Score', challenge.correct + ' / ' + asked));
     $('#chdStats').appendChild(statBox('🔥', 'Best streak', challenge.best));
     $('#chdStats').appendChild(statBox('★', 'XP earned', '+' + xp));
     $('#chdStats').appendChild(statBox('🗂️', 'Cluster', C.CLUSTERS[challenge.key].label));
+    /* recap of missed words */
+    renderRecap(challenge.allMissed.map(function (q) { return { id: q.id, es: q.es, en: q.en }; }), 'chdRecapList', 'chdRecap');
     show('scr-chaldone');
     toast('+' + xp + ' XP for the ' + C.CLUSTERS[challenge.key].label + ' challenge ⚡');
     challenge = null;
   }
 
   /* ---------------- import / settings ---------------- */
-  function openModal() { $('#modal').hidden = false; $('#setNew').value = settings.newPerDay; $('#setNewVal').textContent = settings.newPerDay + ' / day'; $('#setSound').checked = !!settings.sound; $('#importMsg').textContent = ''; }
+  function openModal() {
+    $('#modal').hidden = false;
+    $('#setNew').value = settings.newPerDay;
+    $('#setNewVal').textContent = settings.newPerDay + ' / day';
+    $('#setSound').checked = !!settings.sound;
+    $$('#ansSeg button').forEach(function (b) { b.classList.toggle('active', b.dataset.ans === settings.ans); });
+    $('#setPretest').checked = !!settings.pretest;
+    $('#setTts').checked = !!settings.tts;
+    $('#importMsg').textContent = '';
+  }
   function closeModal() { $('#modal').hidden = true; }
 
   function doImport() {
@@ -524,9 +948,45 @@
       if (Date.now() < suppressFlipUntil) return;   /* long-press conj card was shown */
       flipCard();
     });
+    /* delegated: "🔊 Say it aloud" chips speak their word and never flip the card */
+    document.addEventListener('click', function (ev) {
+      var chip = ev.target && ev.target.closest ? ev.target.closest('.say-chip') : null;
+      if (chip && chip._word) { ev.stopPropagation(); speak(chip._word); }
+    });
     $('#quitBtn').addEventListener('click', function () { if (sess) endSession(); });
     $('#againBtn').addEventListener('click', startSession);
     $('#homeBtn').addEventListener('click', function () { show('scr-start'); renderStart(); refreshPills(); });
+    $('#recapPractice').addEventListener('click', practiceMissed);
+    $('#typeCheck').addEventListener('click', checkType);
+    $('#typePeek').addEventListener('click', peekType);
+    $('#typeNext').addEventListener('click', continueTyped);
+    /* after a miss/peek, a click anywhere else on the typed panel advances
+       (clicks on controls keep their own behavior) */
+    $('#typePanel').addEventListener('click', function (ev) {
+      if (ev.target && ev.target.closest && ev.target.closest('button, input, .say-chip, .say-btn')) return;
+      continueTyped();
+    });
+    $('#typeInput').addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        if (sess && sess.typed !== 'idle') continueTyped();
+        else checkType();
+      }
+    });
+    $('#chTypeCheck').addEventListener('click', chCheckType);
+    $('#chTypePeek').addEventListener('click', chPeekType);
+    $('#chTypeNext').addEventListener('click', continueChalTyped);
+    $('#chal-q-card').addEventListener('click', function (ev) {
+      if (ev.target && ev.target.closest && ev.target.closest('button, input, .say-chip, .say-btn')) return;
+      continueChalTyped();
+    });
+    $('#chTypeInput').addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        if (challenge && challenge.waiting) continueChalTyped();
+        else chCheckType();
+      }
+    });
     $('#grades').addEventListener('click', function (ev) {
       var b = ev.target.closest('.g');
       if (!b) return;
@@ -590,6 +1050,15 @@
       saveSettings();
     });
     $('#setSound').addEventListener('change', function () { settings.sound = $('#setSound').checked; saveSettings(); });
+    $('#ansSeg').addEventListener('click', function (ev) {
+      var b = ev.target.closest('button');
+      if (!b) return;
+      settings.ans = b.dataset.ans;
+      saveSettings();
+      $$('#ansSeg button').forEach(function (x) { x.classList.toggle('active', x.dataset.ans === settings.ans); });
+    });
+    $('#setPretest').addEventListener('change', function () { settings.pretest = $('#setPretest').checked; saveSettings(); });
+    $('#setTts').addEventListener('change', function () { settings.tts = $('#setTts').checked; saveSettings(); });
     $('#importBtn').addEventListener('click', doImport);
     $('#resetProgress').addEventListener('click', function () {
       if (!confirm('Reset all learning progress? Imported words stay.')) return;
@@ -613,6 +1082,21 @@
       var quiz = !$('#scr-quiz').hidden;
       var chal = !$('#scr-chal').hidden;
       if (quiz) {
+        if (sess && sess.pre && !$('#pretestPanel').hidden) {
+          /* pretest mode: 1–4 picks an option */
+          if (ev.key >= '1' && ev.key <= '4' && !sess.preLocked) { ev.preventDefault(); preAnswer(parseInt(ev.key, 10) - 1); }
+          return;
+        }
+        if (!$('#typePanel').hidden) {
+          /* a typed round is on screen (type or mixed mode) */
+          if (sess && sess.typed !== 'idle') {
+            /* resolution on screen (correct or not): Space/Enter advances */
+            if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); continueTyped(); }
+            else if (ev.key === 'Escape') { ev.preventDefault(); if (sess) endSession(); }
+          } else if (ev.key === 'Enter' && !$('#typeInput').disabled) { ev.preventDefault(); checkType(); }
+          else if (ev.key === 'Escape') { ev.preventDefault(); if (sess) endSession(); }
+          return;
+        }
         if (ev.key === ' ' || ev.key === 'Enter') {
           /* let focused grade buttons keep their native click */
           if (ev.target && ev.target.closest && ev.target.closest('.g')) return;
@@ -621,7 +1105,14 @@
         else if (ev.key === 'Escape') { ev.preventDefault(); if (sess) endSession(); }
         else if (ev.key >= '1' && ev.key <= '4' && $('#flip').classList.contains('flipped')) grade(parseInt(ev.key, 10) - 1);
       } else if (chal) {
-        if (ev.key >= '1' && ev.key <= '4') { ev.preventDefault(); answer(parseInt(ev.key, 10) - 1); }
+        var cq = challenge ? challenge.qs[challenge.i] : null;
+        if (challenge && challenge.waiting) {
+          /* typed resolution on screen: Space/Enter advances */
+          if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); continueChalTyped(); }
+          else if (ev.key === 'Escape') { $('#chQuit').click(); }
+        }
+        else if (cq && !cq.typed && ev.key >= '1' && ev.key <= '4') { ev.preventDefault(); chAnswer(parseInt(ev.key, 10) - 1); }
+        else if (cq && cq.typed && ev.key === 'Enter' && !$('#chTypeInput').disabled) { ev.preventDefault(); chCheckType(); }
         else if (ev.key === 'Escape') { $('#chQuit').click(); }
       }
     });

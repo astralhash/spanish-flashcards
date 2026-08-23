@@ -1,12 +1,13 @@
 # VocabES 🇪🇸
 
-**European Spanish flashcard trainer (B1–C2)** — a single-file web app with SM-2
-spaced repetition, cluster challenges, and full verb conjugation tables.
+**European Spanish flashcard trainer (B1–C2)** — a single-file web app with
+spaced repetition (SM-2 + learning steps), typed & flashcard practice, cluster
+challenges, and full verb conjugation tables.
 
 - **No dependencies, no build step for users**: `index.html` is a self-contained
   app (HTML + CSS + JS inlined). Open it in any browser, or serve it statically.
-- **Data**: 2,000+ common European-Spanish words (currently 2,074: B1 830 · B2 607
-  · C1 426 · C2 211), curated around real frequency lists.
+- **Data**: 2,000+ common European-Spanish words (currently 2,494: B1 934 · B2 752
+  · C1 540 · C2 268), curated around real frequency lists.
 - **Progress**: everything is saved to `localStorage` of the browser — no accounts,
   no network.
 
@@ -22,10 +23,31 @@ python3 -m http.server 8000       # or: npx serve .
 
 ## Features
 
-- **Spaced repetition** — SM-2-style scheduling (again/hard/good/easy), daily
-  new-card quota (default 20, adjustable 5–60), overdue-first sessions.
-- **Cluster challenges** — timed multiple-choice bursts over word groups:
+- **Spaced repetition with learning steps** — new words walk short 1-min /
+  10-min within-session steps before graduating to SM-2-style day intervals
+  (again/hard/good/easy), daily new-card quota (default 20, adjustable 5–60),
+  overdue-first sessions.
+- **Answer style: Type / Mixed / Flashcard** (Settings) —
+  - **Typed recall (default)** — write your answer instead of recognizing it;
+    accent- and article-tolerant matching, accepts conjugated forms of target
+    verbs. Right answers show a green reveal; wrong answers and peeks show
+    the correct pair prominently (`question = answer`). Every typed outcome
+    holds on screen and clears question/input/buttons until you click, press
+    Space or Enter. Research (the generation effect) shows production beats
+    recognition for long-term retention.
+  - **Mixed** — randomly alternates typed and flashcard rounds within one run
+    (format marked with ✏️ / 🃏).
+  - **Flashcard** — flip card plus an optional 4-option *pretest* for new
+    words (errorful generation), then self-graded reveal.
+- **Pronunciation on demand** — 🔊 play buttons and "Say it aloud" chips speak
+  Spanish words only when clicked (browser voices, offline); nothing reads
+  aloud automatically.
+- **Cluster challenges** — multiple-choice or typed bursts over word groups:
   weekdays, months, numbers, colors, family, food & drink, body, animals.
+  Missed items are re-asked in a replay round, and every challenge ends with
+  a "words to watch" recap.
+- **Session recap** — missed words are listed after each session with a
+  one-click "practice these now" re-run.
 - **Conjugation tables** — hover any verb to see 7 tenses + imperatives
   (European Spanish, incl. `vosotros`), generated from `src/conj.cjs`.
 - **Import** — add your own words in Settings (JSON array or `es | en | level | cluster` lines).

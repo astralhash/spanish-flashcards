@@ -35,38 +35,57 @@ ok(s.dueCount === 0, 'nothing due initially');
 s = Core.buildSession(st, entries, ['b1', 'b2'], 20);
 ok(s.total === 20 && s.newCount === 20, 'level filter works');
 
-/* grading: hard -> 1 day, due tomorrow */
+/* learning steps: hard on a new card repeats step 0 (1 min), does not graduate */
 const idA = s.ids[0];
 Core.applyGrade(st, idA, 1, T - 2 * DAY);
 let card = st.cards[idA];
-ok(card.r === 1 && card.i === 1 && card.d === T - DAY, 'hard: interval 1 day, due next day');
+ok(card.r === 1 && card.st === 0 && card.i === 0 && card.d === T - 2 * DAY + 1 * MIN,
+  'hard on new card: repeats step 0, due in 1 min');
 let s2 = Core.buildSession(st, entries, ['b1', 'b2'], 20);
-ok(s2.ids.indexOf(idA) !== -1, 'overdue card reappears in session');
-ok(s2.dueCount >= 1, 'dueCount reflects the overdue card');
+ok(s2.ids.indexOf(idA) !== -1, 'old step-0 card reappears as overdue');
+ok(Core.inSteps(st.cards[idA]), 'inSteps true while learning');
 
-/* good -> tomorrow  |  not due now, not unseen */
+/* good on a new card advances to step 1 (10 min) */
 const idB = s2.ids.filter((x) => x !== idA)[0];
 Core.applyGrade(st, idB, 2, T);
 card = st.cards[idB];
-ok(card.i === 1 && card.d === T + DAY, 'good: +1 day');
+ok(card.r === 1 && card.st === 1 && card.i === 0 && card.d === T + 10 * MIN, 'good on new card: advances to step 1 (10 min)');
+ok(!Core.learned(st.cards[idB]), 'step card not yet "learned"');
+
+/* second good graduates → first day interval */
+Core.applyGrade(st, idB, 2, T + 11 * MIN);
+card = st.cards[idB];
+ok(card.st == null && card.i === 1 && card.d === T + 11 * MIN + DAY, 'second good graduates to 1-day interval');
+ok(Core.learned(st.cards[idB]), 'graduated card is learned');
 let s3 = Core.buildSession(st, entries, ['b1', 'b2'], 20);
 ok(s3.ids.indexOf(idB) === -1, 'card due tomorrow is not scheduled now');
 
-/* lapse: again on a learned card, due 10 min later, no longer learned */
+/* again mid-steps restarts the current step (error → fast re-exposure) */
+const idE = s3.ids.filter((x) => x !== idA && x !== idB)[0];
+Core.applyGrade(st, idE, 2, T);
+Core.applyGrade(st, idE, 0, T + MIN);
+card = st.cards[idE];
+ok(card.l === 1 && card.r === 0 && card.st === 1 && card.d === T + MIN + 10 * MIN, 'again mid-steps: lapse, restart step 1 (10 min)');
+
+/* lapse on a graduated card: classic relearning (10 min), not "learned" any more */
 Core.applyGrade(st, idB, 0, T - 20 * MIN);
 card = st.cards[idB];
-ok(card.r === 0 && card.l === 1 && card.d === T - 10 * MIN, 'again: lapse -> r=0, due in 10 min (now past)');
+ok(card.r === 0 && card.l === 1 && card.st == null && card.d === T - 10 * MIN, 'again on learned card: lapse -> r=0, due in 10 min (now past)');
 ok(Core.dueCards(st, entries, ['b1', 'b2']).some((e) => e.id === idB), 'lapsed card is due again');
 ok(!Core.learned(st.cards[idB]), 'lapsed card no longer learned');
+/* re-graduating a lapsed card returns to the classic 1-day path */
+Core.applyGrade(st, idB, 2, T);
+card = st.cards[idB];
+ok(card.st == null && card.i === 1 && card.d === T + DAY, 'lapsed card recovers via classic 1-day interval');
 
-/* easy ramps interval + ease (fresh card -> e 2.65) */
-const idC = s3.ids.filter((x) => x !== idA && x !== idB)[0];
+/* easy on a fresh new card skips straight to 3 days */
+const idC = s3.ids.filter((x) => x !== idA && x !== idB && x !== idE)[0];
 Core.applyGrade(st, idC, 3, T);
 card = st.cards[idC];
-ok(card.i === 3 && card.e === 2.65, 'easy: 3 days, ease 2.5 -> 2.65');
+ok(card.st == null && card.i === 3 && card.e === 2.65, 'easy: 3 days, ease 2.5 -> 2.65');
 
-/* daily new-card quota */
-ok(Core.newTodayCount(st) === 1, 'newTodayCount: exactly the card introduced today (idB)');
+/* daily new-card quota: only r=0 cards newly added today count (idE failed) */
+ok(Core.newTodayCount(st) === 1, 'newTodayCount: only the failed new card (r=0) counts');
 
 /* challenges — independent of the level selection */
 const cands = Core.challengeCandidates(st, entries, ['b1']);
@@ -102,6 +121,23 @@ ok(imp.errors === 0, 'no duplicates');
 
 const imp2 = Core.parseImport('[["uno","one","b1"],["uno","other","b1"]]');
 ok(imp2.entries.length === 1 && imp2.errors === 1, 'whole-JSON import + duplicate detection');
+
+/* pretest: 4 unique options incl. the answer, both directions */
+const p1 = Core.buildPretest(entries, entries[0], 'es-en');
+ok(p1 && p1.opts.length === 4 && p1.opts.indexOf(entries[0].en) !== -1, 'buildPretest es-en: 4 options incl. English answer');
+const p2 = Core.buildPretest(entries, entries[0], 'en-es');
+ok(p2 && p2.opts.indexOf(entries[0].es) !== -1, 'buildPretest en-es: Spanish answer among options');
+ok(p2.opts.every((o) => typeof o === 'string' && o.length > 0), 'pretest options non-empty');
+
+/* typed matching: accents, articles, junk */
+ok(Core.answerMatches('la mesa', 'MESÁ'), 'matches ignoring accents');
+ok(Core.answerMatches('el tiempo', 'tiempo'), 'matches ignoring leading article');
+ok(Core.answerMatches('tiempo', 'el tiempo'), 'matches with extra article on guess');
+ok(Core.answerMatches('trabajar', 'trabajár '), 'matches ignoring accents + trailing space');
+ok(!Core.answerMatches('la mesa', 'silla'), 'rejects a wrong word');
+ok(!Core.answerMatches('salir', 'ir'), 'rejects substring traps');
+ok(!Core.answerMatches('la mesa', ''), 'rejects empty guess');
+ok(Core.normalizeAnswer('¡MÁÑANA!') === 'manana', 'normalizeAnswer strips accents + punctuation');
 
 if (fails) { console.error('\n' + fails + ' FAILURE(S)'); process.exit(1); }
 console.log('\nSMOKE OK — core logic verified');
