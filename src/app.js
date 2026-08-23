@@ -381,7 +381,7 @@
     wrap.textContent = '';
     var cands = C.challengeCandidates(state, entries(), settings.levels);
     if (!cands.length) {
-      wrap.appendChild(el('p', 'muted small', 'No cluster available for the selected levels yet — pick levels that contain cluster words (weekdays, months, numbers, colors, family, food, body, animals).'));
+      wrap.appendChild(el('p', 'muted small', 'No cluster available for the selected levels yet — pick levels that contain cluster words (weekdays, months, numbers, colors, family, food, body, animals, everyday expressions, slang, TV & film).'));
       return;
     }
     cands.sort(function (a, b) { return a.cooldownMs - b.cooldownMs; });

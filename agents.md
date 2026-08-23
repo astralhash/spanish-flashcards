@@ -20,7 +20,7 @@ If `node` isn't on PATH, use `/opt/homebrew/bin/node`.
 - Every file is a JSON array of rows: `["spanish","english","level","cluster?"]`.
 - `level` ∈ `b1 | b2 | c1 | c2`. Build targets: **b1 800 · b2 600 · c1 400 · c2 200**
   (counts below target → build exits 1; exceeding is fine).
-- `cluster` ∈ `wochentage, monate, zahlen, farben, familie, essen, koerper, tiere`
+- `cluster` ∈ `wochentage, monate, zahlen, farben, familie, essen, koerper, tiere, expresiones, jerga, cine`
   (only for entries belonging to a challenge word group).
 - **Merge order = lexical filename order**, and **the first occurrence of a
   Spanish word wins**: `vocab-b1a < vocab-b1b < vocab-b2 < vocab-c1 < vocab-c2

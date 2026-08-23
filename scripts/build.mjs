@@ -2,7 +2,7 @@
 import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
 
 const TARGETS = { b1: 800, b2: 600, c1: 400, c2: 200 };
-const CLUSTERS_OK = new Set(['wochentage', 'monate', 'zahlen', 'farben', 'familie', 'essen', 'koerper', 'tiere']);
+const CLUSTERS_OK = new Set(['wochentage', 'monate', 'zahlen', 'farben', 'familie', 'essen', 'koerper', 'tiere', 'expresiones', 'jerga', 'cine']);
 const LEVELS_OK = new Set(Object.keys(TARGETS));
 
 /* ---------- 1. load & validate source files ---------- */

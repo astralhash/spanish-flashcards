@@ -15,7 +15,10 @@
     familie:    { label: 'Family',   icon: '👪', min: 10 },
     essen:      { label: 'Food & Drink', icon: '🥘', min: 10 },
     koerper:    { label: 'Body',     icon: '🫀', min: 10 },
-    tiere:      { label: 'Animals',  icon: '🐾', min: 10 }
+    tiere:      { label: 'Animals',  icon: '🐾', min: 10 },
+    expresiones: { label: 'Expressions', icon: '💬', min: 10 },
+    jerga:      { label: 'Slang & Youth', icon: '😎', min: 10 },
+    cine:       { label: 'TV & Film',  icon: '🎬', min: 10 }
   };
 
   function shuffle(arr) {
