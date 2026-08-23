@@ -18,14 +18,20 @@
   var STEM = {
     pensar: 'e_ie', despertarse: 'e_ie', quebrar: 'e_ie', renegar: 'e_ie',
     perderse: 'e_ie', entender: 'e_ie',
+    cerrar: 'e_ie', empezar: 'e_ie', negar: 'e_ie', enmendar: 'e_ie',
+    sentarse: 'e_ie', sentir: 'e_ie', preferir: 'e_ie', convertir: 'e_ie', advertir: 'e_ie',
+    manifestar: 'e_ie', divertirse: 'e_ie', arrepentirse: 'e_ie',
     inferir: 'e_ie',
     discernir: 'e_ie_no',           /* diphthong in present only, no e→i elsewhere */
     soñar: 'o_ue', aprobar: 'o_ue', probar: 'o_ue', probarse: 'o_ue', acostarse: 'o_ue', acostar: 'o_ue',
-    recordar: 'o_ue', costar: 'o_ue',
-    devolver: 'o_ue', resolver: 'o_ue', soler: 'o_ue',
-    dormirse: 'o_ue',
+    recordar: 'o_ue', costar: 'o_ue', contar: 'o_ue', sonar: 'o_ue', volar: 'o_ue',
+    devolver: 'o_ue', resolver: 'o_ue', soler: 'o_ue', volver: 'o_ue', mover: 'o_ue', doler: 'o_ue',
+    dormirse: 'o_ue', dormir: 'o_ue', morir: 'o_ue', encontrar: 'o_ue', acordarse: 'o_ue',
+    demostrar: 'o_ue', comprobar: 'o_ue', renovar: 'o_ue', reforzar: 'o_ue', esforzarse: 'o_ue',
+    llover: 'o_ue',
     jugar: 'u_ue',
-    vestirse: 'e_i', despedir: 'e_i', seguir: 'e_i', conseguir: 'e_i', elegir: 'e_i'
+    vestirse: 'e_i', despedir: 'e_i', seguir: 'e_i', conseguir: 'e_i', elegir: 'e_i',
+    pedir: 'e_i', servir: 'e_i', repetir: 'e_i', corregir: 'e_i', impedir: 'e_i'
   };
 
   /* -cer/-cir verbs that add -zco/-zca (others fall back to plain rules for custom words) */
@@ -33,16 +39,17 @@
   /* -cer verbs that stay plain (c→z) instead of zc */
   var PLAIN_CER = { mecer: 1, cocer: 1, escocer: 1, zurcir: 1 };
   /* stem-vowel hiatus accent (prohíbo …) */
-  var HIATUS = { prohibir: 1 };
+  var HIATUS = { prohibir: 1, enviar: 1, confiar: 1, ampliar: 1, paliar: 1, atenuar: 1, aunar: 1 };
   /* y-glide verbs: irregular preterite/gerund/participle, everything else regular */
   var YVERBS = {
     leer: { pret: ['leí', 'leíste', 'leyó', 'leímos', 'leísteis', 'leyeron'], ger: 'leyendo', part: 'leído' },
     creer: { pret: ['creí', 'creíste', 'creyó', 'creímos', 'creísteis', 'creyeron'], ger: 'creyendo', part: 'creído' }
   };
   /* participle overrides for otherwise-regular verbs */
-  var PART = { escribir: 'escrito', devolver: 'devuelto', resolver: 'resuelto', volver: 'vuelto' };
+  var PART = { escribir: 'escrito', devolver: 'devuelto', resolver: 'resuelto', volver: 'vuelto',
+    abrir: 'abierto', morir: 'muerto' };
   /* defective verbs: third person only */
-  var DEFECTIVE = { atañer: 1, acaecer: 1, incumbir: 1 };
+  var DEFECTIVE = { atañer: 1, acaecer: 1, incumbir: 1, llover: 1 };
 
   /* endings */
   var AR = {
@@ -295,7 +302,197 @@
       sub: ['sonría', 'sonrías', 'sonría', 'sonriamos', 'sonriáis', 'sonrían'],
       isub: ['sonriera', 'sonrieras', 'sonriera', 'sonriéramos', 'sonrierais', 'sonrieran'],
       impv: { tu: 'sonríe', vos: 'sonreíd' }, ger: 'sonriendo', part: 'sonreído'
+    },
+    haber: {
+      cls: 'er', fut: 'habr',
+      pres: ['he', 'has', 'ha', 'hemos', 'habéis', 'han'],
+      pret: ['hube', 'hubiste', 'hubo', 'hubimos', 'hubisteis', 'hubieron'],
+      imp: ['había', 'habías', 'había', 'habíamos', 'habíais', 'habían'],
+      sub: ['haya', 'hayas', 'haya', 'hayamos', 'hayáis', 'hayan'],
+      isub: ['hubiera', 'hubieras', 'hubiera', 'hubiéramos', 'hubierais', 'hubieran'],
+      impv: { tu: 'he', vos: 'habed' }, ger: 'habiendo', part: 'habido'
+    },
+    poder: {
+      cls: 'er', fut: 'podr',
+      pres: ['puedo', 'puedes', 'puede', 'podemos', 'podéis', 'pueden'],
+      pret: ['pude', 'pudiste', 'pudo', 'pudimos', 'pudisteis', 'pudieron'],
+      imp: ['podía', 'podías', 'podía', 'podíamos', 'podíais', 'podían'],
+      sub: ['pueda', 'puedas', 'pueda', 'podamos', 'podáis', 'puedan'],
+      isub: ['pudiera', 'pudieras', 'pudiera', 'pudiéramos', 'pudierais', 'pudieran'],
+      impv: { tu: 'puede', vos: 'poded' }, ger: 'pudiendo', part: 'podido'
+    },
+    querer: {
+      cls: 'er', fut: 'querr',
+      pres: ['quiero', 'quieres', 'quiere', 'queremos', 'queréis', 'quieren'],
+      pret: ['quise', 'quisiste', 'quiso', 'quisimos', 'quisisteis', 'quisieron'],
+      imp: ['quería', 'querías', 'quería', 'queríamos', 'queríais', 'querían'],
+      sub: ['quiera', 'quieras', 'quiera', 'queramos', 'queráis', 'quieran'],
+      isub: ['quisiera', 'quisieras', 'quisiera', 'quisiéramos', 'quisierais', 'quisieran'],
+      impv: { tu: 'quiere', vos: 'quered' }, ger: 'queriendo', part: 'querido'
+    },
+    saber: {
+      cls: 'er', fut: 'sabr',
+      pres: ['sé', 'sabes', 'sabe', 'sabemos', 'sabéis', 'saben'],
+      pret: ['supe', 'supiste', 'supo', 'supimos', 'supisteis', 'supieron'],
+      imp: ['sabía', 'sabías', 'sabía', 'sabíamos', 'sabíais', 'sabían'],
+      sub: ['sepa', 'sepas', 'sepa', 'sepamos', 'sepáis', 'sepan'],
+      isub: ['supiera', 'supieras', 'supiera', 'supiéramos', 'supierais', 'supieran'],
+      impv: { tu: 'sabe', vos: 'sabed' }, ger: 'sabiendo', part: 'sabido'
+    },
+    salir: {
+      cls: 'ir', fut: 'saldr',
+      pres: ['salgo', 'sales', 'sale', 'salimos', 'salís', 'salen'],
+      pret: ['salí', 'saliste', 'salió', 'salimos', 'salisteis', 'salieron'],
+      imp: ['salía', 'salías', 'salía', 'salíamos', 'salíais', 'salían'],
+      sub: ['salga', 'salgas', 'salga', 'salgamos', 'salgáis', 'salgan'],
+      isub: ['saliera', 'salieras', 'saliera', 'saliéramos', 'salierais', 'salieran'],
+      impv: { tu: 'sal', vos: 'salid' }, ger: 'saliendo', part: 'salido'
+    },
+    traer: {
+      cls: 'er', fut: 'traer',
+      pres: ['traigo', 'traes', 'trae', 'traemos', 'traéis', 'traen'],
+      pret: ['traje', 'trajiste', 'trajo', 'trajimos', 'trajisteis', 'trajeron'],
+      imp: ['traía', 'traías', 'traía', 'traíamos', 'traíais', 'traían'],
+      sub: ['traiga', 'traigas', 'traiga', 'traigamos', 'traigáis', 'traigan'],
+      isub: ['trajera', 'trajeras', 'trajera', 'trajéramos', 'trajerais', 'trajeran'],
+      impv: { tu: 'trae', vos: 'traed' }, ger: 'trayendo', part: 'traído'
+    },
+    ver: {
+      cls: 'er', fut: 'ver',
+      pres: ['veo', 'ves', 've', 'vemos', 'veis', 'ven'],
+      pret: ['vi', 'viste', 'vio', 'vimos', 'visteis', 'vieron'],
+      imp: ['veía', 'veías', 'veía', 'veíamos', 'veíais', 'veían'],
+      sub: ['vea', 'veas', 'vea', 'veamos', 'veáis', 'vean'],
+      isub: ['viera', 'vieras', 'viera', 'viéramos', 'vierais', 'vieran'],
+      impv: { tu: 've', vos: 'ved' }, ger: 'viendo', part: 'visto'
+    },
+    oír: {
+      cls: 'ir', fut: 'oír',
+      pres: ['oigo', 'oyes', 'oye', 'oímos', 'oís', 'oyen'],
+      pret: ['oí', 'oíste', 'oyó', 'oímos', 'oísteis', 'oyeron'],
+      imp: ['oía', 'oías', 'oía', 'oíamos', 'oíais', 'oían'],
+      sub: ['oiga', 'oigas', 'oiga', 'oigamos', 'oigáis', 'oigan'],
+      isub: ['oyera', 'oyeras', 'oyera', 'oyéramos', 'oyerais', 'oyeran'],
+      impv: { tu: 'oye', vos: 'oíd' }, ger: 'oyendo', part: 'oído'
+    },
+    caer: {
+      cls: 'er', fut: 'caer',
+      pres: ['caigo', 'caes', 'cae', 'caemos', 'caéis', 'caen'],
+      pret: ['caí', 'caíste', 'cayó', 'caímos', 'caísteis', 'cayeron'],
+      imp: ['caía', 'caías', 'caía', 'caíamos', 'caíais', 'caían'],
+      sub: ['caiga', 'caigas', 'caiga', 'caigamos', 'caigáis', 'caigan'],
+      isub: ['cayera', 'cayeras', 'cayera', 'cayéramos', 'cayerais', 'cayeran'],
+      impv: { tu: 'cae', vos: 'caed' }, ger: 'cayendo', part: 'caído'
+    },
+    valer: {
+      cls: 'er', fut: 'valdr',
+      pres: ['valgo', 'vales', 'vale', 'valemos', 'valéis', 'valen'],
+      pret: ['valí', 'valiste', 'valió', 'valimos', 'valisteis', 'valieron'],
+      imp: ['valía', 'valías', 'valía', 'valíamos', 'valíais', 'valían'],
+      sub: ['valga', 'valgas', 'valga', 'valgamos', 'valgáis', 'valgan'],
+      isub: ['valiera', 'valieras', 'valiera', 'valiéramos', 'valierais', 'valieran'],
+      impv: { tu: 'val', vos: 'valed' }, ger: 'valiendo', part: 'valido'
+    },
+    oler: {
+      cls: 'er', fut: 'oler',
+      pres: ['huelo', 'hueles', 'huele', 'olemos', 'oléis', 'huelen'],
+      pret: ['olí', 'oliste', 'olió', 'olimos', 'olisteis', 'olieron'],
+      imp: ['olía', 'olías', 'olía', 'olíamos', 'olíais', 'olían'],
+      sub: ['huela', 'huelas', 'huela', 'holamos', 'holáis', 'huelan'],
+      isub: ['oliera', 'olieras', 'oliera', 'oliéramos', 'olierais', 'olieran'],
+      impv: { tu: 'huele', vos: 'oled' }, ger: 'oliendo', part: 'olido'
+    },
+    conducir: {
+      cls: 'ir', fut: 'conducir',
+      pres: ['conduzco', 'conduces', 'conduce', 'conducimos', 'conducís', 'conducen'],
+      pret: ['conduje', 'condujiste', 'condujo', 'condujimos', 'condujisteis', 'condujeron'],
+      imp: ['conducía', 'conducías', 'conducía', 'conducíamos', 'conducíais', 'conducían'],
+      sub: ['conduzca', 'conduzcas', 'conduzca', 'conduzcamos', 'conduzcáis', 'conduzcan'],
+      isub: ['condujera', 'condujeras', 'condujera', 'condujéramos', 'condujerais', 'condujeran'],
+      impv: { tu: 'conduce', vos: 'conducid' }, ger: 'conduciendo', part: 'conducido'
+    },
+    producir: {
+      cls: 'ir', fut: 'producir',
+      pres: ['produzco', 'produces', 'produce', 'producimos', 'producís', 'producen'],
+      pret: ['produje', 'produjiste', 'produjo', 'produjimos', 'produjisteis', 'produjeron'],
+      imp: ['producía', 'producías', 'producía', 'producíamos', 'producíais', 'producían'],
+      sub: ['produzca', 'produzcas', 'produzca', 'produzcamos', 'produzcáis', 'produzcan'],
+      isub: ['produjera', 'produjeras', 'produjera', 'produjéramos', 'produjerais', 'produjeran'],
+      impv: { tu: 'produce', vos: 'producid' }, ger: 'produciendo', part: 'producido'
+    },
+    predecir: {
+      cls: 'ir', fut: 'predir',
+      pres: ['predigo', 'predices', 'predice', 'predecimos', 'predecís', 'predicen'],
+      pret: ['predije', 'predijiste', 'predijo', 'predijimos', 'predijisteis', 'predijeron'],
+      imp: ['predecía', 'predecías', 'predecía', 'predecíamos', 'predecíais', 'predecían'],
+      sub: ['prediga', 'predigas', 'prediga', 'predigamos', 'predigáis', 'predigan'],
+      isub: ['predijera', 'predijeras', 'predijera', 'predijéramos', 'predijerais', 'predijeran'],
+      impv: { tu: 'predice', vos: 'predecid' }, ger: 'prediciendo', part: 'predicho'
+    },
+    suponer: {
+      cls: 'er', fut: 'supondr',
+      pres: ['supongo', 'supones', 'supone', 'suponemos', 'suponéis', 'suponen'],
+      pret: ['supuse', 'supusiste', 'supuso', 'supusimos', 'supusisteis', 'supusieron'],
+      imp: ['suponía', 'suponías', 'suponía', 'suponíamos', 'suponíais', 'suponían'],
+      sub: ['suponga', 'supongas', 'suponga', 'supongamos', 'supongáis', 'supongan'],
+      isub: ['supusiera', 'supusieras', 'supusiera', 'supusiéramos', 'supusierais', 'supusieran'],
+      impv: { tu: 'supón', vos: 'suponed' }, ger: 'suponiendo', part: 'supuesto'
+    },
+    obtener: {
+      cls: 'er', fut: 'obtendr',
+      pres: ['obtengo', 'obtienes', 'obtiene', 'obtenemos', 'obtenéis', 'obtienen'],
+      pret: ['obtuve', 'obtuviste', 'obtuvo', 'obtuvimos', 'obtuvisteis', 'obtuvieron'],
+      imp: ['obtenía', 'obtenías', 'obtenía', 'obteníamos', 'obteníais', 'obtenían'],
+      sub: ['obtenga', 'obtengas', 'obtenga', 'obtengamos', 'obtengáis', 'obtengan'],
+      isub: ['obtuviera', 'obtuvieras', 'obtuviera', 'obtuviéramos', 'obtuvierais', 'obtuvieran'],
+      impv: { tu: 'obtén', vos: 'obtened' }, ger: 'obteniendo', part: 'obtenido'
+    },
+    construir: {
+      cls: 'ir', fut: 'construir',
+      pres: ['construyo', 'construyes', 'construye', 'construimos', 'construís', 'construyen'],
+      pret: ['construí', 'construiste', 'construyó', 'construimos', 'construisteis', 'construyeron'],
+      imp: ['construía', 'construías', 'construía', 'construíamos', 'construíais', 'construían'],
+      sub: ['construya', 'construyas', 'construya', 'construyamos', 'construyáis', 'construyan'],
+      isub: ['construyera', 'construyeras', 'construyera', 'construyéramos', 'construyerais', 'construyeran'],
+      impv: { tu: 'construye', vos: 'construid' }, ger: 'construyendo', part: 'construido'
+    },
+    incluir: {
+      cls: 'ir', fut: 'incluir',
+      pres: ['incluyo', 'incluyes', 'incluye', 'incluimos', 'incluís', 'incluyen'],
+      pret: ['incluí', 'incluiste', 'incluyó', 'incluimos', 'incluisteis', 'incluyeron'],
+      imp: ['incluía', 'incluías', 'incluía', 'incluíamos', 'incluíais', 'incluían'],
+      sub: ['incluya', 'incluyas', 'incluya', 'incluyamos', 'incluyáis', 'incluyan'],
+      isub: ['incluyera', 'incluyeras', 'incluyera', 'incluyéramos', 'incluyerais', 'incluyeran'],
+      impv: { tu: 'incluye', vos: 'incluid' }, ger: 'incluyendo', part: 'incluido'
+    },
+    sustituir: {
+      cls: 'ir', fut: 'sustituir',
+      pres: ['sustituyo', 'sustituyes', 'sustituye', 'sustituimos', 'sustituís', 'sustituyen'],
+      pret: ['sustituí', 'sustituiste', 'sustituyó', 'sustituimos', 'sustituisteis', 'sustituyeron'],
+      imp: ['sustituía', 'sustituías', 'sustituía', 'sustituíamos', 'sustituíais', 'sustituían'],
+      sub: ['sustituya', 'sustituyas', 'sustituya', 'sustituyamos', 'sustituyáis', 'sustituyan'],
+      isub: ['sustituyera', 'sustituyeras', 'sustituyera', 'sustituyéramos', 'sustituyerais', 'sustituyeran'],
+      impv: { tu: 'sustituye', vos: 'sustituid' }, ger: 'sustituyendo', part: 'sustituido'
+    },
+    contribuir: {
+      cls: 'ir', fut: 'contribuir',
+      pres: ['contribuyo', 'contribuyes', 'contribuye', 'contribuimos', 'contribuís', 'contribuyen'],
+      pret: ['contribuí', 'contribuiste', 'contribuyó', 'contribuimos', 'contribuisteis', 'contribuyeron'],
+      imp: ['contribuía', 'contribuías', 'contribuía', 'contribuíamos', 'contribuíais', 'contribuían'],
+      sub: ['contribuya', 'contribuyas', 'contribuya', 'contribuyamos', 'contribuyáis', 'contribuyan'],
+      isub: ['contribuyera', 'contribuyeras', 'contribuyera', 'contribuyéramos', 'contribuyerais', 'contribuyeran'],
+      impv: { tu: 'contribuye', vos: 'contribuid' }, ger: 'contribuyendo', part: 'contribuido'
+    },
+    intuir: {
+      cls: 'ir', fut: 'intuir',
+      pres: ['intuyo', 'intuyes', 'intuye', 'intuimos', 'intuís', 'intuyen'],
+      pret: ['intuí', 'intuiste', 'intuyó', 'intuimos', 'intuisteis', 'intuyeron'],
+      imp: ['intuía', 'intuías', 'intuía', 'intuíamos', 'intuíais', 'intuían'],
+      sub: ['intuya', 'intuyas', 'intuya', 'intuyamos', 'intuyáis', 'intuyan'],
+      isub: ['intuyera', 'intuyeras', 'intuyera', 'intuyéramos', 'intuyerais', 'intuyeran'],
+      impv: { tu: 'intuye', vos: 'intuid' }, ger: 'intuyendo', part: 'intuido'
     }
+
   };
 
   /* ---------- helpers ---------- */
@@ -410,7 +607,8 @@
     var e = plain(endCh);
     if (cls === 'ar') {
       if (e === 'e') {
-        if (/c$/.test(s)) s = s.slice(0, -1) + 'qu';        /* pagar → pagué */
+        if (/gu$/.test(s)) s = s.slice(0, -1) + 'ü';        /* atestiguar → atestigüé */
+        else if (/c$/.test(s)) s = s.slice(0, -1) + 'qu';   /* pagar → pagué */
         else if (/g$/.test(s)) s = s.slice(0, -1) + 'gu';   /* jugar → jugué */
         else if (/z$/.test(s)) s = s.slice(0, -1) + 'c';    /* cazar → cacé */
       }

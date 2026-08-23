@@ -1,7 +1,7 @@
 /* Top-up: fill remaining slots with curated candidates that are NOT already in the deck. */
 import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
 
-const TARGETS = { b1: 400, b2: 300, c1: 200, c2: 100 };
+const TARGETS = { b1: 800, b2: 600, c1: 400, c2: 200 };
 
 /* gather used words */
 const used = new Set();

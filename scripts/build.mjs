@@ -1,7 +1,7 @@
 /* VocabES build: merge data/*.json → validate → inline everything into a single index.html */
 import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
 
-const TARGETS = { b1: 400, b2: 300, c1: 200, c2: 100 };
+const TARGETS = { b1: 800, b2: 600, c1: 400, c2: 200 };
 const CLUSTERS_OK = new Set(['wochentage', 'monate', 'zahlen', 'farben', 'familie', 'essen', 'koerper', 'tiere']);
 const LEVELS_OK = new Set(Object.keys(TARGETS));
 
@@ -62,6 +62,7 @@ for (const lvl of ['b1', 'b2', 'c1', 'c2']) {
   total += counts[lvl];
 }
 console.log('total:', total);
+
 console.log('\nclusters:', JSON.stringify(clusters));
 if (problems.length) {
   console.log('\n=== PROBLEMS (' + problems.length + ') ===');
@@ -82,6 +83,16 @@ const conj = readFileSync('src/conj.cjs', 'utf8');
 const css = readFileSync('src/style.css', 'utf8');
 const app = readFileSync('src/app.js', 'utf8');
 let html = readFileSync('src/template.html', 'utf8');
+/* inject real word counts into the template text */
+html = html.replace(/%%COUNT%%/g, String(total))
+           .replace(/%%B1%%/g, String(counts.b1))
+           .replace(/%%B2%%/g, String(counts.b2))
+           .replace(/%%C1%%/g, String(counts.c1))
+           .replace(/%%C2%%/g, String(counts.c2));
+{
+  const left = html.match(/%{2}(?:COUNT|B1|B2|C1|C2)%{2}/g);
+  if (left && left.length) { console.error('unreplaced count marker:', left.join(',')); process.exit(1); }
+}
 const vocabJs = 'const VOCAB = ' + JSON.stringify(merged).replace(/</g, '\\u003c') + ';';
 
 /* conjugation coverage: every entry that starts with an infinitive must conjugate */

@@ -10,7 +10,7 @@ function ok(cond, name) {
 
 /* synthetic vocab: 4 levels; clusters with >=10 words */
 const VOCAB = [];
-const nPer = { b1: 400, b2: 300, c1: 200, c2: 100 };
+const nPer = { b1: 800, b2: 600, c1: 400, c2: 200 };
 let i = 0;
 for (const lvl of ['b1', 'b2', 'c1', 'c2']) {
   for (let k = 0; k < nPer[lvl]; k++) VOCAB.push(['palabra' + i, 'word' + i, lvl, null]);
@@ -24,7 +24,7 @@ const st = Core.defaultState();
 const entries = Core.withIds(VOCAB, []);
 
 /* counts */
-ok(Core.countLevels(VOCAB).b1 === 424, 'countLevels b1 (400 + two 12-word clusters)');
+ok(Core.countLevels(VOCAB).b1 === 824, 'countLevels b1 (800 + two 12-word clusters)');
 ok(Core.countCluster(VOCAB).farben === 12, 'countCluster farben');
 
 /* session building */
