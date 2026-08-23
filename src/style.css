@@ -404,7 +404,10 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
 
 /* ============ typed mode, pretest, say chips, recap ============ */
 .type-panel { min-height: clamp(300px, 54dvh, 400px); justify-content: center; }
-.type-panel.slim { min-height: 0; padding: 18px; }
+.type-panel.slim {
+  min-height: 0; padding: 18px; border-radius: 14px;
+  background: var(--surface);                 /* solid so the whole-round color wash reads */
+}
 .pre-label { letter-spacing: .06em; }
 .type-input {
   width: 100%; max-width: 480px;
@@ -414,9 +417,17 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
   transition: border-color .15s, box-shadow .15s;
 }
 .type-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.type-input:disabled { opacity: .55; }
-.type-input.ok { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, var(--surface)); }
-.type-input.bad { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 9%, var(--surface)); }
+.type-input:disabled { opacity: .75; }
+/* right-when-you-press-Enter feedback: the typed input itself turns green/red */
+.type-input.ok {
+  border-color: var(--ok); background: color-mix(in srgb, var(--ok) 16%, var(--surface2));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 30%, transparent);
+}
+.type-input.bad {
+  border-color: var(--bad); background: color-mix(in srgb, var(--bad) 15%, var(--surface2));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--bad) 30%, transparent);
+  animation: shake .3s;
+}
 .type-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 .type-fb {
   display: flex; flex-direction: column; align-items: center; gap: 5px;
@@ -429,14 +440,46 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent);
 }
 .type-fb.fb-bad { background: color-mix(in srgb, var(--bad) 11%, var(--surface)); border-color: var(--bad); }
+/* one-shot confirmation flash when a typed answer is checked:
+   green = correct, red = wrong (with a little shake) */
+.type-fb.flash-ok { animation: flashOk .7s cubic-bezier(.22, 1, .36, 1); }
+.type-fb.flash-bad { animation: flashBad .75s cubic-bezier(.22, 1, .36, 1); }
+@keyframes flashOk {
+  0% { background: color-mix(in srgb, var(--ok) 75%, var(--surface)); box-shadow: 0 0 0 14px color-mix(in srgb, var(--ok) 50%, transparent); transform: scale(1.06); }
+  55% { background: color-mix(in srgb, var(--ok) 34%, var(--surface)); }
+  to  { background: color-mix(in srgb, var(--ok) 13%, var(--surface)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent); transform: scale(1); }
+}
+@keyframes flashBad {
+  0% { background: color-mix(in srgb, var(--bad) 70%, var(--surface)); box-shadow: 0 0 0 14px color-mix(in srgb, var(--bad) 50%, transparent); transform: scale(1.06); }
+  35% { transform: translateX(-5px) scale(1.03); }
+  60% { transform: translateX(5px) scale(1.03); }
+  to  { background: color-mix(in srgb, var(--bad) 11%, var(--surface)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 22%, transparent); transform: none; }
+}
+/* whole-card color wash so the outcome cannot be missed */
+.card.panel-flash-ok, .type-panel.panel-flash-ok { animation: panelOk .75s cubic-bezier(.22, 1, .36, 1); }
+.card.panel-flash-bad, .type-panel.panel-flash-bad { animation: panelBad .8s cubic-bezier(.22, 1, .36, 1); }
+@keyframes panelOk {
+  0% { background-color: color-mix(in srgb, var(--ok) 34%, var(--surface)); box-shadow: 0 0 0 5px color-mix(in srgb, var(--ok) 55%, transparent); transform: scale(1.015); }
+  to  { background-color: var(--surface); box-shadow: none; transform: none; }
+}
+@keyframes panelBad {
+  0% { background-color: color-mix(in srgb, var(--bad) 30%, var(--surface)); box-shadow: 0 0 0 5px color-mix(in srgb, var(--bad) 55%, transparent); transform: scale(1.015); }
+  45% { transform: translateX(-4px) scale(1.01); }
+  65% { transform: translateX(4px) scale(1.01); }
+  to  { background-color: var(--surface); box-shadow: none; transform: none; }
+}
+/* big ✓ / ✗ verdict line inside the reveal */
+.verdict { font-size: 1.5rem; font-weight: 800; letter-spacing: .02em; animation: pop .18s ease; }
+.verdict.ok { color: var(--ok); }
+.verdict.bad { color: var(--bad); }
 /* one row:  question word = correct answer  (answer prominent) */
 .reveal-row {
   display: flex; align-items: baseline; justify-content: center;
   gap: 12px; flex-wrap: wrap; width: 100%;
 }
-.reveal-q { font-size: 1.1rem; font-weight: 700; color: var(--text); }
-.reveal-eq { font-size: 1rem; font-weight: 700; color: var(--muted); }
-.reveal-a { font-size: 1.55rem; font-weight: 800; letter-spacing: -.01em; color: var(--text); }
+.reveal-q { font-size: 1.35rem; font-weight: 700; color: var(--text); }
+.reveal-eq { font-size: 1.15rem; font-weight: 700; color: var(--muted); }
+.reveal-a { font-size: 2.05rem; font-weight: 800; letter-spacing: -.01em; color: var(--text); }
 .type-fb.fb-ok .reveal-a { color: var(--ok); }
 .type-fb.fb-bad .reveal-a { color: var(--bad); }
 .reveal-a .say-btn { font-size: .75em; }

@@ -500,7 +500,9 @@
   /* ---------- typed mode ---------- */
   var TYPE_ASK = ['#typeDir', '#typeWord', '#typeInput', '#typeActions'];
   /* 'ask': show the question, input and actions.
-     'reveal': show ONLY the "question = answer" row (and the Continue button). */
+     'reveal': show only the "question = answer" row. checkType() re-shows the input
+     afterwards so the learner's own green/red answer stays visible above it —
+     a peek has nothing to show there and leaves it hidden. */
   function setTypeMode(ask) {
     TYPE_ASK.forEach(function (sel) {
       var n = document.querySelector(sel);
@@ -517,8 +519,10 @@
     renderWord($('#typeWord'), dir === 'es-en' ? e.es : e.en, dir === 'es-en');
     var inp = $('#typeInput');
     inp.value = ''; inp.disabled = false;
+    inp.classList.remove('ok', 'bad');
     $('#typeCheck').disabled = false;
     $('#typeFb').hidden = true;
+    $('#typeVerdict').hidden = true;
     $('#typeNext').hidden = true;
     sess.typed = 'idle';
     setTypeMode(true);
@@ -537,6 +541,15 @@
     if (withPlay) node.appendChild(sayBtn(txt));
   }
 
+  /* one-shot color flash on a typed reveal block — green for a correct answer,
+     red for a miss. The animation runs once; the resting fb-ok/fb-bad style stays. */
+  function flashFb(fb, state) {
+    if (!fb) return;
+    fb.classList.remove('flash-ok', 'flash-bad');
+    if (state === 'ok') fb.classList.add('flash-ok');
+    else if (state === 'miss') fb.classList.add('flash-bad');
+  }
+
   function revealPair(fb, qEl, aEl, es, en, dir, state) {
     fb.hidden = false;
     fb.classList.remove('fb-ok', 'fb-bad');
@@ -548,9 +561,29 @@
     fillReveal(aEl, a, dir === 'en-es');
   }
 
+  /* big ✓ / ✗ verdict line — the headed feedback for a typed answer */
+  function setVerdict(node, state) {
+    if (!node) return;
+    node.classList.remove('ok', 'bad');
+    if (state === 'ok') { node.textContent = '✓ Correct!'; node.classList.add('ok'); node.hidden = false; }
+    else if (state === 'miss') { node.textContent = '✗ Not quite'; node.classList.add('bad'); node.hidden = false; }
+    else node.hidden = true;                 /* peek stays neutral */
+  }
+
+  /* whole-card color wash so the outcome cannot be missed */
+  function flashPanel(panel, state) {
+    if (!panel) return;
+    panel.classList.remove('panel-flash-ok', 'panel-flash-bad');
+    if (state === 'ok') panel.classList.add('panel-flash-ok');
+    else if (state === 'miss') panel.classList.add('panel-flash-bad');
+  }
+
   function revealType(e, dir, state) {
-    setTypeMode(false);                       /* hide the question/input/actions — reveal only */
+    setTypeMode(false);                       /* keep the colored input on screen beside the answer */
     revealPair($('#typeFb'), $('#typeFbQ'), $('#typeFbA'), e.es, e.en, dir, state);
+    setVerdict($('#typeVerdict'), state);
+    flashFb($('#typeFb'), state);
+    flashPanel($('#typePanel'), state);
     if (state === 'ok') sndGood(); else if (state === 'miss') sndBad();
   }
 
@@ -573,9 +606,15 @@
     if (!guess.trim()) return;
     var ok = typedMatch(typeTarget(e, dir), guess);
     sess.typed = ok ? 'ok' : 'miss';
-    $('#typeInput').disabled = true;
+    var inp = $('#typeInput');
+    inp.disabled = true;
+    inp.classList.remove('ok', 'bad');
+    inp.classList.add(ok ? 'ok' : 'bad');     /* instant: the typed word turns green/red */
     $('#typeCheck').disabled = true;
     revealType(e, dir, ok ? 'ok' : 'miss');
+    inp.hidden = false;                       /* the colored answer stays above the reveal */
+    /* correct, wrong or peeked: the correct answer stays on screen until
+       the learner advances (click, Space or Enter) */
     awaitType();
   }
 
@@ -715,7 +754,9 @@
     sndTic();
   }
 
-  /* typed round chrome: question + input + actions (ask) vs. only the reveal row */
+  /* typed round chrome: question + input + actions (ask) vs. only the reveal row.
+     chCheckType() re-shows the input afterwards so the green/red answer stays
+     visible; a peek has nothing to show there and leaves it hidden. */
   function setChalAskMode(ask) {
     $('#chDir').hidden = !ask;
     $('#chWord').hidden = !ask;
@@ -741,10 +782,12 @@
       wrap.hidden = true;
       tw.hidden = false;
       inp.value = ''; inp.disabled = false;
+      inp.classList.remove('ok', 'bad');
       $('#chTypeCheck').disabled = false;
       $('#chTypeNext').hidden = true;
       fb.hidden = true;
       fb.classList.remove('fb-ok', 'fb-bad');
+      $('#chTypeVerdict').hidden = true;
       challenge.chInput = true;
       challenge.waiting = false;
       if (window.matchMedia && window.matchMedia('(pointer: fine)').matches) inp.focus();
@@ -797,6 +840,9 @@
   function revealChal(q, state) {
     setChalAskMode(false);                    /* only the reveal row remains on screen */
     revealPair($('#chTypeFb'), $('#chTypeFbQ'), $('#chTypeFbA'), q.es, q.en, q.d, state);
+    setVerdict($('#chTypeVerdict'), state);
+    flashFb($('#chTypeFb'), state);
+    flashPanel($('#chTypeWrap'), state);      /* wash the typed round — never the card (its reload animation) */
     if (state === 'ok') sndGood(); else if (state === 'miss') sndBad();
   }
 
@@ -809,7 +855,10 @@
     challenge.chInput = false;
     var target = q.d === 'es-en' ? q.en : q.es;
     var ok = typedMatch(target, guess);
-    $('#chTypeInput').disabled = true;
+    var inp = $('#chTypeInput');
+    inp.disabled = true;
+    inp.classList.remove('ok', 'bad');
+    inp.classList.add(ok ? 'ok' : 'bad');     /* instant: the typed word turns green/red */
     $('#chTypeCheck').disabled = true;
     if (ok) {
       challenge.correct++; challenge.streak++;
@@ -820,7 +869,10 @@
       pushMissed(q);
     }
     revealChal(q, ok ? 'ok' : 'miss');
-    challenge.waiting = true;          /* every typed outcome waits for click/Space/Enter */
+    inp.hidden = false;                 /* the colored answer stays above the reveal */
+    /* correct, wrong or peeked: the correct answer stays on screen until
+       the learner advances (click, Space or Enter) */
+    challenge.waiting = true;
     $('#chTypeNext').hidden = false;
   }
 
@@ -969,6 +1021,9 @@
     $('#typeInput').addEventListener('keydown', function (ev) {
       if (ev.key === 'Enter') {
         ev.preventDefault();
+        ev.stopPropagation();              /* this Enter is handled here — it must NOT bubble to the
+                                              document handler, which would immediately advance the
+                                              resolved answer (skipping the reveal / the wait) */
         if (sess && sess.typed !== 'idle') continueTyped();
         else checkType();
       }
@@ -983,6 +1038,7 @@
     $('#chTypeInput').addEventListener('keydown', function (ev) {
       if (ev.key === 'Enter') {
         ev.preventDefault();
+        ev.stopPropagation();              /* same as above: do not double-advance via the document handler */
         if (challenge && challenge.waiting) continueChalTyped();
         else chCheckType();
       }
@@ -1089,11 +1145,14 @@
         }
         if (!$('#typePanel').hidden) {
           /* a typed round is on screen (type or mixed mode) */
+          /* keydowns that started on the panel's own controls (input/Check/Peek) are
+             handled there — the same Enter must not advance twice from here */
+          var inTypeCtrl = ev.target && ev.target.closest && ev.target.closest('#typePanel button, #typePanel input');
           if (sess && sess.typed !== 'idle') {
             /* resolution on screen (correct or not): Space/Enter advances */
-            if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); continueTyped(); }
+            if (!inTypeCtrl && (ev.key === ' ' || ev.key === 'Enter')) { ev.preventDefault(); continueTyped(); }
             else if (ev.key === 'Escape') { ev.preventDefault(); if (sess) endSession(); }
-          } else if (ev.key === 'Enter' && !$('#typeInput').disabled) { ev.preventDefault(); checkType(); }
+          } else if (ev.key === 'Enter' && !inTypeCtrl && !$('#typeInput').disabled) { ev.preventDefault(); checkType(); }
           else if (ev.key === 'Escape') { ev.preventDefault(); if (sess) endSession(); }
           return;
         }
@@ -1106,13 +1165,14 @@
         else if (ev.key >= '1' && ev.key <= '4' && $('#flip').classList.contains('flipped')) grade(parseInt(ev.key, 10) - 1);
       } else if (chal) {
         var cq = challenge ? challenge.qs[challenge.i] : null;
+        var inChCtrl = ev.target && ev.target.closest && ev.target.closest('#chTypeWrap button, #chTypeWrap input');
         if (challenge && challenge.waiting) {
           /* typed resolution on screen: Space/Enter advances */
-          if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); continueChalTyped(); }
+          if (!inChCtrl && (ev.key === ' ' || ev.key === 'Enter')) { ev.preventDefault(); continueChalTyped(); }
           else if (ev.key === 'Escape') { $('#chQuit').click(); }
         }
         else if (cq && !cq.typed && ev.key >= '1' && ev.key <= '4') { ev.preventDefault(); chAnswer(parseInt(ev.key, 10) - 1); }
-        else if (cq && cq.typed && ev.key === 'Enter' && !$('#chTypeInput').disabled) { ev.preventDefault(); chCheckType(); }
+        else if (cq && cq.typed && ev.key === 'Enter' && !inChCtrl && !$('#chTypeInput').disabled) { ev.preventDefault(); chCheckType(); }
         else if (ev.key === 'Escape') { $('#chQuit').click(); }
       }
     });

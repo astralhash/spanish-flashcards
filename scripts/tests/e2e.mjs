@@ -84,24 +84,29 @@ ok(!doc.querySelector('#typePanel').hidden && doc.querySelector('#flip').hidden,
 const total = parseInt(doc.querySelector('#qcount').textContent.split('/')[1], 10);
 ok(total === 20, 'session has 20 cards: ' + total);
 
-/* wrong answer → graded as miss → resolution stays until Space/click */
+/* wrong answer via the ENTER key (the real keyboard path) → red reveal + the correct
+   solution, and it STAYS — the Enter keydown must not double-fire into an instant advance */
 {
   const row = findRow(doc.querySelector('#typeWord').textContent);
   ok(!!row, 'can resolve the typed question word to a vocab row');
   const input = doc.querySelector('#typeInput');
   input.value = 'zzz-not-the-answer';
-  click(doc.querySelector('#typeCheck'));
+  input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
   await wait(350);
   ok(!doc.querySelector('#typeFb').hidden && doc.querySelector('#typeFb').classList.contains('fb-bad'),
-    'wrong typed answer shows the red reveal block');
+    'wrong typed answer (via Enter) shows the red reveal block');
   ok(doc.querySelector('#typeFbQ').textContent.replace(/🔊/g, '').trim() === row[0],
     'reveal row shows the question word');
   ok(doc.querySelector('#typeFbA').textContent.trim() === row[1], 'reveal row shows the correct answer');
-  ok(doc.querySelector('#typeWord').hidden && doc.querySelector('#typeInput').hidden && doc.querySelector('#typeActions').hidden,
-    'reveal clears the question, input and action buttons');
+  ok(!doc.querySelector('#typeVerdict').hidden && doc.querySelector('#typeVerdict').classList.contains('bad') &&
+     doc.querySelector('#typeVerdict').textContent.includes('✗'), 'red ✗ verdict shown');
+  ok(!doc.querySelector('#typeInput').hidden && doc.querySelector('#typeInput').classList.contains('bad'),
+    'typed input stays visible, turned red');
+  ok(doc.querySelector('#typeWord').hidden && doc.querySelector('#typeActions').hidden,
+    'reveal clears the question and action buttons');
   ok(doc.querySelector('#typeInput').disabled, 'input locked after answering');
   ok(!doc.querySelector('#typeNext').hidden, 'Continue button shown after a miss');
-  await wait(900);                                   /* no auto-advance anymore */
+  await wait(900);                                   /* no auto-advance for a miss */
   ok(doc.querySelector('#qcount').textContent.split('/')[0].trim() === '1', 'resolution stays on screen until the learner advances');
   key(' ');                                          /* Space advances */
   await wait(80);
@@ -109,24 +114,28 @@ ok(total === 20, 'session has 20 cards: ' + total);
   ok(!doc.querySelector('#typeInput').hidden, 'next card shows the input again');
 }
 
-/* correct answer → green reveal, held on screen, advances on Space too */
+/* correct answer via Enter → green reveal + green input → held until Space/Enter/click */
 {
   const row = findRow(doc.querySelector('#typeWord').textContent);
   ok(!!row, 'second question resolvable');
   const input = doc.querySelector('#typeInput');
   input.value = answerFor(row, true);                /* dir is es-en */
-  click(doc.querySelector('#typeCheck'));
+  input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
   await wait(350);
   ok(!doc.querySelector('#typeFb').hidden && doc.querySelector('#typeFb').classList.contains('fb-ok'),
     'correct typed answer shows the green reveal block');
   ok(doc.querySelector('#typeFbQ').textContent.replace(/🔊/g, '').trim() === row[0], 'green reveal shows the question word');
   ok(doc.querySelector('#typeFbA').textContent.trim() === row[1], 'green reveal shows the correct answer');
-  ok(!doc.querySelector('#typeNext').hidden, 'Continue shown for correct answers too');
-  await wait(700);                                   /* and it HOLDS — no auto-advance */
-  ok(doc.querySelector('#qcount').textContent.split('/')[0].trim() === '2', 'correct answer also waits for the learner');
+  ok(!doc.querySelector('#typeVerdict').hidden && doc.querySelector('#typeVerdict').classList.contains('ok') &&
+     doc.querySelector('#typeVerdict').textContent.includes('✓'), 'green ✓ verdict shown');
+  ok(!doc.querySelector('#typeInput').hidden && doc.querySelector('#typeInput').classList.contains('ok'),
+    'typed input stays visible, turned green');
+  ok(!doc.querySelector('#typeNext').hidden, 'correct answer also waits — Continue button shown');
+  await wait(900);                                   /* no auto-advance for a correct answer either */
+  ok(doc.querySelector('#qcount').textContent.split('/')[0].trim() === '2', 'correct answer holds until the learner advances');
   key(' ');                                          /* Space advances */
   await wait(80);
-  ok(doc.querySelector('#qcount').textContent.split('/')[0].trim() === '3', 'advanced to question 3 after Space');
+  ok(doc.querySelector('#qcount').textContent.split('/')[0].trim() === '3', 'Space advances after a correct answer');
 }
 
 /* end the session → recap shows the missed word → practice them now */
@@ -140,7 +149,7 @@ click(doc.querySelector('#recapPractice'));
 await wait(40);
 ok(!doc.querySelector('#scr-quiz').hidden, 'practice-missed starts a fresh review');
 ok(doc.querySelector('#qcount').textContent.split('/')[1].trim() === '1', 'practice session contains exactly the missed card');
-/* answer it correctly (hold → Space) until done */
+/* answer it correctly (green reveal holds → Space advances) until done */
 let guard = 0;
 while (doc.querySelector('#scr-done').hidden && guard++ < 8) {
   const row = findRow(doc.querySelector('#typeWord').textContent);
@@ -307,13 +316,17 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
   {
     const row = findRow(doc.querySelector('#chWord').textContent);
     doc.querySelector('#chTypeInput').value = 'zzz-wrong';
-    click(doc.querySelector('#chTypeCheck'));
+    doc.querySelector('#chTypeInput').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
     await wait(400);
     ok(!doc.querySelector('#chTypeFb').hidden && doc.querySelector('#chTypeFb').classList.contains('fb-bad'),
-      'typed challenge wrong answer shows red reveal');
+      'typed challenge wrong answer (via Enter) shows red reveal');
     ok(doc.querySelector('#chTypeFbQ').textContent.replace(/🔊/g, '').trim() === row[0], 'reveal shows the question word');
-    ok(doc.querySelector('#chWord').hidden && doc.querySelector('#chTypeInput').hidden && doc.querySelector('#chTypeActions').hidden,
-      'typed challenge reveal clears the question, input and buttons');
+    ok(!doc.querySelector('#chTypeInput').hidden && doc.querySelector('#chTypeInput').classList.contains('bad'),
+      'challenge input stays visible, turned red');
+    ok(!doc.querySelector('#chTypeVerdict').hidden && doc.querySelector('#chTypeVerdict').classList.contains('bad') &&
+       doc.querySelector('#chTypeVerdict').textContent.includes('✗'), 'challenge shows the ✗ verdict');
+    ok(doc.querySelector('#chWord').hidden && doc.querySelector('#chTypeActions').hidden,
+      'typed challenge reveal clears the question and buttons');
     ok(!doc.querySelector('#chTypeNext').hidden, 'challenge Continue button shown');
     const beforeCount = doc.querySelector('#chCount').textContent;
     await wait(900);
@@ -332,12 +345,35 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
        !doc.querySelector('#chTypeFb').classList.contains('fb-bad'), 'peek shows a neutral reveal');
     ok(doc.querySelector('#chTypeFbQ').textContent.replace(/🔊/g, '').trim() === row[0] &&
     doc.querySelector('#chTypeFbA').textContent.trim() === row[1], 'peek reveals question = answer');
+    ok(doc.querySelector('#chTypeVerdict').hidden, 'peek shows no ✓/✗ verdict');
+    ok(doc.querySelector('#chTypeInput').hidden, 'peek hides the idle input — no dead field above the reveal');
     const beforeCount = doc.querySelector('#chCount').textContent;
     await wait(900);
     ok(doc.querySelector('#chCount').textContent === beforeCount, 'peeked resolution also waits for input');
     key(' ');
     await wait(500);
     ok(doc.querySelector('#chCount').textContent !== beforeCount, 'Space advances after peek');
+  }
+  /* correct typed answer → green reveal → held until Space, like every other outcome */
+  {
+    const row = findRow(doc.querySelector('#chWord').textContent);
+    doc.querySelector('#chTypeInput').value = answerFor(row, true);
+    doc.querySelector('#chTypeInput').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    await wait(350);
+    ok(!doc.querySelector('#chTypeFb').hidden && doc.querySelector('#chTypeFb').classList.contains('fb-ok'),
+      'typed challenge correct answer shows green reveal');
+    ok(!doc.querySelector('#chTypeInput').hidden && doc.querySelector('#chTypeInput').classList.contains('ok'),
+      'challenge input stays visible, turned green');
+    ok(!doc.querySelector('#chTypeVerdict').hidden && doc.querySelector('#chTypeVerdict').classList.contains('ok') &&
+       doc.querySelector('#chTypeVerdict').textContent.includes('✓'), 'challenge shows the ✓ verdict');
+    ok(!doc.querySelector('#chTypeNext').hidden, 'challenge Continue button shown after a correct answer too');
+    const beforeCount = doc.querySelector('#chCount').textContent;
+    await wait(1100);                               /* no auto-advance here either */
+    ok(doc.querySelector('#chCount').textContent === beforeCount, 'correct typed challenge answer also waits');
+    key(' ');
+    await wait(500);
+    ok(doc.querySelector('#chCount').textContent !== beforeCount && !doc.querySelector('#chTypeInput').hidden,
+      'Space advances after a correct typed challenge answer');
   }
   click(doc.querySelector('#chQuit'));
   await wait(30);
@@ -362,8 +398,8 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
       if (row) {
         doc.querySelector('#typeInput').value = answerFor(row, true);
         click(doc.querySelector('#typeCheck'));
-        await wait(400);                             /* hold on the green reveal… */
-        key(' ');                                    /* …then Space advances */
+        await wait(400);                             /* green reveal holds… Space advances */
+        key(' ');
         await wait(350);
       } else { key(' '); await wait(400); }
     } else if (!doc.querySelector('#pretestPanel').hidden) {
