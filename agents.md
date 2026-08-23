@@ -89,8 +89,14 @@ to hit round totals — exceeding targets is fine.
   a target infinitive via `Conj.table`.
 - **Reveals**: on check/peek the panel collapses to `question = answer` and
   *holds* — advancing requires clicking, Space or Enter (correct = graded
-  'good', miss/peek = 'again'). Nothing auto-speaks: audio only plays via the
-  🔊 buttons/chips (`settings.tts`, browser speech synthesis).
+  'good', miss/peek = 'again'). Speech: audio plays on demand via 🔊
+  buttons/chips or the `S` key (`curEsWord()` picks the visible word without
+  spoiling en-es prompts); with `settings.autoSpeak` (default) every reveal
+  also speaks the word automatically — hooks live in `revealPair`, `flipCard`
+  and `chAnswer`. Engines (`settings.tts`): ranked system voices or the opt-in
+  HD neural voice (`src/tts.js`, Piper WASM via CDN). Speaker buttons blur on
+  click and `.say-btn` is exempt from the "focused control" keydown guards, so
+  Space always advances instead of re-triggering audio.
 - Failed cards are re-queued once per session (`sess.revoked`) and recorded in
   the "words to watch" recap; challenges replay missed items once in a final
   round (`challenge.missed`/`allMissed`, one replay round max).

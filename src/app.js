@@ -22,11 +22,23 @@
 
   function entries() { return ENTS || (ENTS = C.withIds(VOCAB, state.custom)); }
 
+  function defaultSettings() {
+    return {
+      levels: ['b1', 'b2'], dir: 'es-en', newPerDay: 20, sound: true, theme: null,
+      ans: 'type', pretest: true, tts: true,
+      /* speech: system-voice override ('' = auto-pick best), speed multiplier,
+         and the optional HD neural engine (src/tts.js).
+         autoSpeak: pronounce each word as it is revealed (off = only on demand
+         via 🔊 buttons or the S key). */
+      voiceURI: '', rate: 0.92, hd: false, hdVoice: 'es_ES-sharvard-medium',
+      autoSpeak: true
+    };
+  }
   function loadSettings() {
     try {
       var s = JSON.parse(localStorage.getItem(LS_KEY + '.set') || '{}');
-      return Object.assign({ levels: ['b1', 'b2'], dir: 'es-en', newPerDay: 20, sound: true, theme: null, ans: 'type', pretest: true, tts: true }, s);
-    } catch (e) { return { levels: ['b1', 'b2'], dir: 'es-en', newPerDay: 20, sound: true, theme: null, ans: 'type', pretest: true, tts: true }; }
+      return Object.assign(defaultSettings(), s);
+    } catch (e) { return defaultSettings(); }
   }
   function saveSettings() { try { localStorage.setItem(LS_KEY + '.set', JSON.stringify(settings)); } catch (e) {} }
   function loadState() {
@@ -42,6 +54,10 @@
     var all = entries();
     for (var i = 0; i < all.length; i++) if (all[i].id === id) return all[i];
     return null;
+  }
+  /* the entry the running review session is currently showing (or null) */
+  function curEntry() {
+    return (sess && sess.ids) ? entryById(sess.ids[sess.i]) : null;
   }
   function show(id) {
     $$('.screen').forEach(function (s) { s.hidden = s.id !== id; });
@@ -215,51 +231,113 @@
 
   /* ---- speech (text-to-speech) + production prompts ---- */
   /* The production effect: saying words aloud (or at least hearing them right
-     after a recall attempt) strengthens memory for the spoken form. */
+     after a recall attempt) strengthens memory for the spoken form.
+     Two engines, tried in order:
+       1. HD neural voice (Piper WASM via src/tts.js) — opt-in, downloaded once.
+       2. System voices via Web Speech API — ranked best-first, because
+          getVoices() order is arbitrary and the first es* voice is often the
+          worst one installed (compact eSpeak-style voices etc.). */
+  var esVoices = [];
   var esVoice = null;
-  function pickEsVoice() {
+  function scoreVoice(v) {
+    var n = String(v.name || '').toLowerCase();
+    var lang = String(v.lang || '').toLowerCase().replace('_', '-');
+    var s = 0;
+    if (/natural|neural/.test(n)) s += 45;                    /* Edge/Win11 neural */
+    if (/\bgoogle\b/.test(n)) s += 50;                        /* Chrome network voices */
+    if (/premium|enhanced|mejorada|extend/.test(n)) s += 25;  /* macOS/Win high tiers */
+    if (/mónica|monica|marisol|jorge|nelida|luciana|isidora|dalia|elvira/.test(n)) s += 18;
+    if (/es-es/.test(lang)) s += 10;                          /* European Spanish bias… */
+    else if (/^es([-$]|$)/.test(lang)) s += 6;                /* …but good MX beats bad ES */
+    if (v.localService === false) s += 6;                     /* network voices tend to sound better */
+    if (/compact|eloquence|espeak|pico|festival|novelty|robosoft/.test(n)) s -= 30;
+    return s;
+  }
+  function refreshVoices() {
     try {
-      if (!window.speechSynthesis) return null;
+      if (!window.speechSynthesis) { esVoices = []; esVoice = null; return; }
       var vs = window.speechSynthesis.getVoices() || [];
-      for (var i = 0; i < vs.length; i++) {
-        if (String(vs[i].lang || '').toLowerCase().indexOf('es') === 0) return vs[i];
+      esVoices = vs.filter(function (v) { return String(v.lang || '').toLowerCase().indexOf('es') === 0; })
+        .sort(function (a, b) { return scoreVoice(b) - scoreVoice(a); });
+      esVoice = esVoices[0] || null;
+    } catch (e) { esVoices = []; esVoice = null; }
+    if (!$('#modal').hidden) fillVoiceUI();
+  }
+  function pickSystemVoice() {
+    if (!esVoices.length) refreshVoices();
+    if (settings.voiceURI) {
+      for (var i = 0; i < esVoices.length; i++) {
+        if (esVoices[i].voiceURI === settings.voiceURI) return esVoices[i];
       }
-    } catch (e) { /* no voices */ }
-    return null;
+    }
+    return esVoice;
   }
   if (typeof window !== 'undefined' && window.speechSynthesis && window.speechSynthesis.onvoiceschanged !== undefined) {
-    window.speechSynthesis.onvoiceschanged = function () { esVoice = pickEsVoice(); };
+    window.speechSynthesis.onvoiceschanged = refreshVoices;
   }
+  refreshVoices();
+
   function speak(text) {
     if (!settings.tts) return;
+    text = String(text);
+    if (settings.hd && window.NeuralTTS) {
+      NeuralTTS.speak(text, { voice: settings.hdVoice, rate: settings.rate })
+        .catch(function () {
+          speakSystem(text);
+          toast('HD voice unavailable — used system voice');
+        });
+      return;
+    }
+    speakSystem(text);
+  }
+  function speakSystem(text) {
     try {
       if (!window.speechSynthesis) return;
-      var u = new SpeechSynthesisUtterance(String(text));
+      var u = new SpeechSynthesisUtterance(text);
       u.lang = 'es-ES';
-      u.rate = 0.92;
-      if (!esVoice) esVoice = pickEsVoice();
-      if (esVoice) u.voice = esVoice;
+      u.rate = Math.max(0.5, Math.min(1.5, Number(settings.rate) || 0.92));
+      var v = pickSystemVoice();
+      if (v) u.voice = v;
       window.speechSynthesis.cancel();
       window.speechSynthesis.speak(u);
     } catch (e) { /* speech unavailable */ }
   }
+  /* The Spanish word currently on screen — or null when showing it would spoil
+     the answer (e.g. the prompt of an en-es round before it is revealed). */
+  function curEsWord() {
+    var e = curEntry();
+    if (!$('#scr-quiz').hidden && sess && e) {
+      if (!$('#typePanel').hidden) {
+        if (sess.typed === 'idle' && sess.curDir === 'en-es') return null;
+        return e.es;
+      }
+      if ($('#flip').classList.contains('flipped')) return e.es;   /* revealed card */
+      return sess.curDir === 'es-en' ? e.es : null;                /* front side */
+    }
+    if (!$('#scr-chal').hidden && challenge) {
+      var q = challenge.qs[challenge.i];
+      if (!q) return null;
+      var revealed = challenge.waiting || challenge.locked;
+      if (!revealed && q.d === 'en-es') return null;
+      return q.es;
+    }
+    return null;
+  }
   function sayBtn(text) {
-    var b = el('button', 'say-btn', '🔊');
+    var b = el('button', 'say-btn');
+    /* small monochrome speaker icon (scales with the text, tints on hover) */
+    b.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" ' +
+      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>' +
+      '<path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>';
     b.setAttribute('aria-label', 'Pronounce: ' + text);
     b.title = 'Pronounce';
     b.addEventListener('click', function (ev) {
       if (ev) ev.stopPropagation();
+      b.blur();       /* Space must advance to the next word, not re-fire this button */
       speak(text);
     });
     return b;
-  }
-  /* Show/hide a "say it aloud" chip that speaks `word` when clicked.
-     Showing it does not depend on the tts setting — it is a human nudge. */
-  function armChip(node, word) {
-    if (!node) return;
-    if (!word) { node.hidden = true; return; }
-    node._word = word;
-    node.hidden = false;
   }
 
   /* ---- typed-answer matching ---- */
@@ -330,6 +408,26 @@
     $$('#dirSeg button').forEach(function (b) {
       b.classList.toggle('active', b.dataset.dir === settings.dir);
     });
+    $$('#ansSeg button').forEach(function (b) {
+      b.classList.toggle('active', b.dataset.ans === settings.ans);
+    });
+
+    /* one contextual "how to play" line — it matches the chosen answer style,
+       so typed mode never shows flashcard instructions and vice versa */
+    var dirLabel = settings.dir === 'es-en' ? 'Spanish → English'
+                 : settings.dir === 'en-es' ? 'English → Spanish' : 'mixed directions';
+    var how;
+    if (settings.ans === 'type') {
+      how = ['✏️ Typed', 'type the translation, <kbd>Enter</kbd> checks it'];
+    } else if (settings.ans === 'flip') {
+      how = ['🃏 Flashcards', 'click or press <kbd>Space</kbd> to reveal · <kbd>1</kbd>–<kbd>4</kbd> grades'];
+    } else {
+      how = ['🔀 Mixed', 'typed cards (<kbd>Enter</kbd> checks) & flashcards (<kbd>Space</kbd> reveals) alternate'];
+    }
+    if (settings.tts && !settings.autoSpeak) {
+      how[1] += ' · <kbd>S</kbd> says the word';
+    }
+    $('#dirHint').innerHTML = how[0] + ': <b>' + dirLabel + '</b> · ' + how[1];
 
     var act = C.eligible(all, settings.levels);
     var learnedN = 0;
@@ -391,9 +489,6 @@
   function renderCard() {
     var e = entryById(sess.ids[sess.i]);
     hideConj();
-    armChip($('#frontChip'), null);
-    armChip($('#sayChip'), null);
-    armChip($('#preSay'), null);
 
     var card = state.cards[e.id];
     $('#newBadge').hidden = !(card ? (card.r === 0 || C.inSteps(card)) : true);
@@ -428,22 +523,16 @@
     flip.classList.add('reload');
     renderWord($('#frontWord'), front, dir === 'es-en');
     renderWord($('#backWord'), back, dir === 'en-es');
-    $('#frontWord').parentNode.querySelector('.hint').textContent =
-      (settings.ans === 'mix' ? '🃏 ' : '') +
-      (dir === 'es-en' ? 'Spanish → English' : 'English → Spanish') + ' · click or press Space to reveal';
-    if (dir === 'es-en') armChip($('#frontChip'), e.es);   /* production prompt while the Spanish is visible */
     setQuizVisibility('flip');
   }
 
   function flipCard() {
     var flip = $('#flip');
-    var willShow = !flip.classList.contains('flipped');
     flip.classList.toggle('flipped');
-    /* the reveal moment: if the revealed side is Spanish, offer the say-aloud chip
-       (audio only plays when the chip is clicked) */
-    if (willShow && sess && sess.curDir === 'en-es') {
-      var e = entryById(sess.ids[sess.i]);
-      if (e) armChip($('#sayChip'), e.es);
+    /* autoSpeak: hear the Spanish word the moment the card reveals it */
+    if (settings.tts && settings.autoSpeak && flip.classList.contains('flipped')) {
+      var e = curEntry();
+      if (e) speak(e.es);
     }
   }
 
@@ -452,7 +541,6 @@
     var q = C.buildPretest(entries(), e, sess.curDir);
     sess.pre = q; sess.preLocked = false;
     $('#preFb').hidden = true;
-    armChip($('#preSay'), null);
     renderWord($('#preWord'), q.d === 'es-en' ? q.es : q.en, false, true);
     var wrap = $('#preOpts');
     wrap.textContent = '';
@@ -485,14 +573,12 @@
       }
     }
     btns.forEach(function (b) { b.classList.add('lock'); });
-    armChip($('#preSay'), q.es);
     setTimeout(function () {
       if (!sess) return;
       /* reveal the card with the answer side up → the learner rates at once */
       var flip = $('#flip');
       flip.classList.add('flipped');
       setQuizVisibility('flip');
-      if (q.d === 'en-es') armChip($('#sayChip'), q.es);
       sess.pre = null;
     }, 1150);
   }
@@ -559,6 +645,8 @@
     var a = dir === 'es-en' ? en : es;      /* the correct answer */
     fillReveal(qEl, q, dir === 'es-en');
     fillReveal(aEl, a, dir === 'en-es');
+    /* production prompt: hear the word right as it is revealed (autoSpeak setting) */
+    if (settings.tts && settings.autoSpeak) speak(es);
   }
 
   /* big ✓ / ✗ verdict line — the headed feedback for a typed answer */
@@ -833,6 +921,8 @@
       sndBad();
     }
     btns.forEach(function (b) { b.classList.add('lock'); });
+    /* autoSpeak: the answer (and in es-en questions, the word itself) is now shown */
+    if (settings.tts && settings.autoSpeak) speak(q.es);
     setTimeout(chAdvance, 620);
   }
 
@@ -950,12 +1040,83 @@
     $('#setNew').value = settings.newPerDay;
     $('#setNewVal').textContent = settings.newPerDay + ' / day';
     $('#setSound').checked = !!settings.sound;
-    $$('#ansSeg button').forEach(function (b) { b.classList.toggle('active', b.dataset.ans === settings.ans); });
     $('#setPretest').checked = !!settings.pretest;
     $('#setTts').checked = !!settings.tts;
+    fillVoiceUI();
+    refreshVoices();          /* voices may have loaded since last open */
     $('#importMsg').textContent = '';
   }
   function closeModal() { $('#modal').hidden = true; }
+
+  /* ---- voice settings UI ---- */
+  function voiceLabel(v) {
+    var bits = [v.name, v.lang];
+    if (v.localService === false) bits.push('network');
+    return bits.join(' · ');
+  }
+  function fillVoiceUI() {
+    if (!$('#modal') || !$('#setVoice')) return;
+    /* the whole engine block only makes sense when speaking is enabled */
+    $('#voiceBox').hidden = !settings.tts;
+    $('#setAutoSpeak').checked = !!settings.autoSpeak;
+    /* system-voice dropdown: Auto first, then ranked es voices */
+    var sel = $('#setVoice');
+    sel.innerHTML = '';
+    var auto = el('option', '', 'Auto — best available');
+    auto.value = '';
+    sel.appendChild(auto);
+    for (var i = 0; i < esVoices.length; i++) {
+      var o = el('option', '', voiceLabel(esVoices[i]));
+      o.value = esVoices[i].voiceURI;
+      sel.appendChild(o);
+    }
+    sel.disabled = esVoices.length === 0;
+    if (!esVoices.some(function (v) { return v.voiceURI === settings.voiceURI; })) settings.voiceURI = '';
+    sel.value = settings.voiceURI || '';
+    /* HD neural dropdown */
+    if (window.NeuralTTS) {
+      var hdSel = $('#setHdVoice');
+      hdSel.innerHTML = '';
+      Object.keys(NeuralTTS.voices).forEach(function (id) {
+        var o = el('option', '', NeuralTTS.voices[id]);
+        o.value = id;
+        hdSel.appendChild(o);
+      });
+      hdSel.value = NeuralTTS.voices[settings.hdVoice] ? settings.hdVoice : hdSel.firstChild.value;
+      $('#setHd').checked = !!settings.hd;
+      $('#hdVoiceRow').hidden = !settings.hd;
+    }
+    /* speed slider (stored as multiplier, shown as %) */
+    var ratePct = Math.round((Number(settings.rate) || 0.92) * 100);
+    $('#setRate').value = ratePct;
+    $('#setRateVal').textContent = ratePct + '%';
+    updateHdStatus();
+  }
+  function updateHdStatus() {
+    var node = $('#hdStatus');
+    if (!node) return;
+    var s = window.NeuralTTS ? NeuralTTS.status() : { status: 'idle', detail: '' };
+    if (!settings.hd) { node.textContent = ''; return; }
+    if (s.status === 'loading') node.textContent = '⏳ ' + s.detail;
+    else if (s.status === 'ready') node.textContent = '✓ HD voice ready';
+    else if (s.status === 'error') node.textContent = '⚠ ' + s.detail + ' — will fall back to system voices';
+    else node.textContent = '';
+  }
+  /* 🔊 next to the voice pickers: speaks a fixed sample with the *selected*
+     controls (settings are already persisted by their change handlers). */
+  function previewVoice() {
+    if (!window.NeuralTTS) return;
+    var sample = 'Hola, así suena esta voz.';
+    if ($('#setHd').checked && !$('#hdVoiceRow').hidden) {
+      NeuralTTS.speak(sample, { voice: $('#setHdVoice').value, rate: settings.rate })
+        .catch(function () { toast('HD voice unavailable — used system voice'); speakSystem(sample); });
+      return;
+    }
+    var saved = settings.voiceURI;
+    settings.voiceURI = $('#setVoice').value || '';
+    speakSystem(sample);
+    settings.voiceURI = saved;
+  }
 
   function doImport() {
     var text = $('#importArea').value;
@@ -1000,11 +1161,6 @@
       if (Date.now() < suppressFlipUntil) return;   /* long-press conj card was shown */
       flipCard();
     });
-    /* delegated: "🔊 Say it aloud" chips speak their word and never flip the card */
-    document.addEventListener('click', function (ev) {
-      var chip = ev.target && ev.target.closest ? ev.target.closest('.say-chip') : null;
-      if (chip && chip._word) { ev.stopPropagation(); speak(chip._word); }
-    });
     $('#quitBtn').addEventListener('click', function () { if (sess) endSession(); });
     $('#againBtn').addEventListener('click', startSession);
     $('#homeBtn').addEventListener('click', function () { show('scr-start'); renderStart(); refreshPills(); });
@@ -1015,7 +1171,7 @@
     /* after a miss/peek, a click anywhere else on the typed panel advances
        (clicks on controls keep their own behavior) */
     $('#typePanel').addEventListener('click', function (ev) {
-      if (ev.target && ev.target.closest && ev.target.closest('button, input, .say-chip, .say-btn')) return;
+      if (ev.target && ev.target.closest && ev.target.closest('button, input, .say-btn')) return;
       continueTyped();
     });
     $('#typeInput').addEventListener('keydown', function (ev) {
@@ -1032,7 +1188,7 @@
     $('#chTypePeek').addEventListener('click', chPeekType);
     $('#chTypeNext').addEventListener('click', continueChalTyped);
     $('#chal-q-card').addEventListener('click', function (ev) {
-      if (ev.target && ev.target.closest && ev.target.closest('button, input, .say-chip, .say-btn')) return;
+      if (ev.target && ev.target.closest && ev.target.closest('button, input, .say-btn')) return;
       continueChalTyped();
     });
     $('#chTypeInput').addEventListener('keydown', function (ev) {
@@ -1100,6 +1256,7 @@
         conjTouch = 0;
       }, { passive: true });
     }
+    if (window.NeuralTTS) NeuralTTS.onStatus(function () { updateHdStatus(); });
     $('#setNew').addEventListener('input', function () {
       settings.newPerDay = parseInt($('#setNew').value, 10);
       $('#setNewVal').textContent = settings.newPerDay + ' / day';
@@ -1110,11 +1267,48 @@
       var b = ev.target.closest('button');
       if (!b) return;
       settings.ans = b.dataset.ans;
-      saveSettings();
-      $$('#ansSeg button').forEach(function (x) { x.classList.toggle('active', x.dataset.ans === settings.ans); });
+      saveSettings(); renderStart();   /* re-render also updates the contextual how-to line */
     });
     $('#setPretest').addEventListener('change', function () { settings.pretest = $('#setPretest').checked; saveSettings(); });
-    $('#setTts').addEventListener('change', function () { settings.tts = $('#setTts').checked; saveSettings(); });
+    $('#setTts').addEventListener('change', function () {
+      settings.tts = $('#setTts').checked; saveSettings();
+      if (window.NeuralTTS) NeuralTTS.stop();
+      try { window.speechSynthesis.cancel(); } catch (e) {}
+      $('#voiceBox').hidden = !settings.tts;
+      renderStart();          /* keeps the contextual how-to hint in sync */
+    });
+    $('#setAutoSpeak').addEventListener('change', function () {
+      settings.autoSpeak = $('#setAutoSpeak').checked; saveSettings();
+      renderStart();
+    });
+    $('#setVoice').addEventListener('change', function () {
+      settings.voiceURI = $('#setVoice').value || '';
+      saveSettings();
+      previewVoice();
+    });
+    $('#voicePrev').addEventListener('click', function () { previewVoice(); });
+    $('#setRate').addEventListener('input', function () {
+      settings.rate = parseInt($('#setRate').value, 10) / 100;
+      $('#setRateVal').textContent = $('#setRate').value + '%';
+      saveSettings();
+    });
+    $('#setHd').addEventListener('change', function () {
+      settings.hd = $('#setHd').checked;
+      saveSettings();
+      $('#hdVoiceRow').hidden = !settings.hd;
+      updateHdStatus();
+      if (settings.hd && window.NeuralTTS && NeuralTTS.status().status === 'idle') {
+        /* warm up the chosen model in the background so the first 🔊 is quick */
+        NeuralTTS.prefetch(settings.hdVoice).catch(function () { updateHdStatus(); });
+        updateHdStatus();
+      }
+    });
+    $('#setHdVoice').addEventListener('change', function () {
+      settings.hdVoice = $('#setHdVoice').value;
+      saveSettings();
+      if (window.NeuralTTS) NeuralTTS.stop();
+      previewVoice();           /* hear the newly picked HD voice */
+    });
     $('#importBtn').addEventListener('click', doImport);
     $('#resetProgress').addEventListener('click', function () {
       if (!confirm('Reset all learning progress? Imported words stay.')) return;
@@ -1135,6 +1329,15 @@
         if (ev.key === 'Escape') closeModal();
         return;
       }
+      /* S says the current Spanish word on demand — never while typing an answer */
+      if ((ev.key === 's' || ev.key === 'S') && !ev.metaKey && !ev.ctrlKey && !ev.altKey) {
+        var t = ev.target;
+        var typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || (t.closest && t.closest('input, textarea')));
+        if (!typing) {
+          var w = curEsWord();
+          if (w) { ev.preventDefault(); speak(w); }
+        }
+      }
       var quiz = !$('#scr-quiz').hidden;
       var chal = !$('#scr-chal').hidden;
       if (quiz) {
@@ -1146,8 +1349,9 @@
         if (!$('#typePanel').hidden) {
           /* a typed round is on screen (type or mixed mode) */
           /* keydowns that started on the panel's own controls (input/Check/Peek) are
-             handled there — the same Enter must not advance twice from here */
-          var inTypeCtrl = ev.target && ev.target.closest && ev.target.closest('#typePanel button, #typePanel input');
+             handled there — the same Enter must not advance twice from here.
+             .say-btn is exempt: after clicking 🔊, Space still advances. */
+          var inTypeCtrl = ev.target && ev.target.closest && ev.target.closest('#typePanel button:not(.say-btn), #typePanel input');
           if (sess && sess.typed !== 'idle') {
             /* resolution on screen (correct or not): Space/Enter advances */
             if (!inTypeCtrl && (ev.key === ' ' || ev.key === 'Enter')) { ev.preventDefault(); continueTyped(); }
@@ -1165,7 +1369,7 @@
         else if (ev.key >= '1' && ev.key <= '4' && $('#flip').classList.contains('flipped')) grade(parseInt(ev.key, 10) - 1);
       } else if (chal) {
         var cq = challenge ? challenge.qs[challenge.i] : null;
-        var inChCtrl = ev.target && ev.target.closest && ev.target.closest('#chTypeWrap button, #chTypeWrap input');
+        var inChCtrl = ev.target && ev.target.closest && ev.target.closest('#chTypeWrap button:not(.say-btn), #chTypeWrap input');
         if (challenge && challenge.waiting) {
           /* typed resolution on screen: Space/Enter advances */
           if (!inChCtrl && (ev.key === ' ' || ev.key === 'Enter')) { ev.preventDefault(); continueChalTyped(); }

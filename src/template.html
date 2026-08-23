@@ -34,6 +34,15 @@
       <div class="chips" id="levelChips"></div>
 
       <div class="row">
+        <span class="lbl">Answer style</span>
+        <div class="seg" id="ansSeg">
+          <button data-ans="type">✏️ Type it</button>
+          <button data-ans="mix">🔀 Mixed</button>
+          <button data-ans="flip">🃏 Flashcard</button>
+        </div>
+      </div>
+
+      <div class="row">
         <span class="lbl">Direction</span>
         <div class="seg" id="dirSeg">
           <button data-dir="es-en">ES → EN</button>
@@ -41,6 +50,7 @@
           <button data-dir="mix">Mix</button>
         </div>
       </div>
+      <p id="dirHint" class="dir-hint"></p>
 
       <button id="startBtn" class="primary big">▶&nbsp; Start session</button>
 
@@ -70,7 +80,6 @@
       <div id="preFb" class="type-fb" hidden>
         <div class="reveal-row"><span id="preFbQ" class="reveal-q"></span><span class="reveal-eq">=</span><span id="preFbA" class="reveal-a"></span></div>
       </div>
-      <div id="preSay" class="say-chip" hidden>🔊 Say it aloud</div>
     </div>
 
     <div id="flip" class="flipcard" tabindex="0" role="button" aria-label="Flashcard — show answer">
@@ -81,8 +90,6 @@
           <span id="newBadge" class="badge new" hidden>NEW</span>
         </div>
         <div id="frontWord" class="word"></div>
-        <div class="hint">Click card or press <kbd>Space</kbd> to reveal</div>
-        <div id="frontChip" class="say-chip" hidden>🔊 Say it aloud</div>
       </div>
       <div class="face back">
         <div class="badges"><span class="badge">answer</span></div>
@@ -93,8 +100,6 @@
           <button class="g g-good" data-q="2"><kbd>3</kbd> Good</button>
           <button class="g g-easy" data-q="3"><kbd>4</kbd> Easy</button>
         </div>
-        <div class="hint hb"><kbd>1</kbd> again → returns this session</div>
-        <div id="sayChip" class="say-chip" hidden>🔊 Say it aloud</div>
       </div>
     </div>
 
@@ -200,16 +205,29 @@
       </label>
       <label class="field check"><input type="checkbox" id="setSound"> Sounds</label>
 
-      <div class="lbl">Answer style</div>
-      <div class="seg" id="ansSeg">
-        <button data-ans="type">✏️ Type it</button>
-        <button data-ans="mix">🔀 Mixed</button>
-        <button data-ans="flip">🃏 Flashcard</button>
-      </div>
-      <p class="muted small">Typing makes you <i>produce</i> the answer — retention research (the generation effect) shows it beats recognition. <b>Mixed</b> alternates both formats within one run. Flashcard rounds offer a 4-option guess for new words first.</p>
-
       <label class="field check"><input type="checkbox" id="setPretest"> Guess new words first (4-option pretest in Flashcard mode)</label>
       <label class="field check"><input type="checkbox" id="setTts"> Speak Spanish out loud (text-to-speech)</label>
+      <div class="field voice-box" id="voiceBox">
+        <div class="voice-row">
+          <label class="grow">Voice
+            <select id="setVoice"></select>
+          </label>
+          <button id="voicePrev" class="icon-btn" title="Preview voice" aria-label="Preview voice">🔊</button>
+        </div>
+        <label class="field check"><input type="checkbox" id="setAutoSpeak"> Say each word aloud automatically when it's revealed
+          <span class="muted small">— off: only on demand (speaker icon or press <kbd>S</kbd>)</span>
+        </label>
+        <label class="field check hd"><input type="checkbox" id="setHd"> HD neural voice
+          <span class="muted small">— much better pronunciation; downloads once (~60–120&nbsp;MB), then works offline</span>
+        </label>
+        <label class="field" id="hdVoiceRow" hidden>HD voice
+          <select id="setHdVoice"></select>
+          <span id="hdStatus" class="muted small"></span>
+        </label>
+        <label class="field">Speaking speed
+          <div class="range-row"><input type="range" id="setRate" min="70" max="120" step="1"><span id="setRateVal" class="muted"></span></div>
+        </label>
+      </div>
 
       <label class="field">Import words <span class="muted">— make the deck yours (saved in this browser)</span>
         <textarea id="importArea" rows="6" spellcheck="false" placeholder='JSON array, e.g. [["el gato","cat","b1"]]  — or one per line:  el gato | cat | b1   (optional 4th column: cluster id — wochentage, monate, zahlen, farben, familie, essen, koerper, tiere, expresiones, jerga, cine)'></textarea>
@@ -236,6 +254,9 @@
 </script>
 <script>
 /*__VOCAB__*/
+</script>
+<script>
+/*__TTS__*/
 </script>
 <script>
 /*__APP__*/

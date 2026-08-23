@@ -93,6 +93,7 @@ if (short.length) {
 const core = readFileSync('src/core.cjs', 'utf8');
 const conj = readFileSync('src/conj.cjs', 'utf8');
 const css = readFileSync('src/style.css', 'utf8');
+const tts = readFileSync('src/tts.js', 'utf8');
 const app = readFileSync('src/app.js', 'utf8');
 let html = readFileSync('src/template.html', 'utf8');
 /* inject real word counts into the template text */
@@ -126,6 +127,7 @@ html = html.replace('/*__CSS__*/', () => css)
            .replace('/*__CORE__*/', () => core)
            .replace('/*__CONJ__*/', () => conj)
            .replace('/*__VOCAB__*/', () => vocabJs)
+           .replace('/*__TTS__*/', () => tts)
            .replace('/*__APP__*/', () => app);   /* replacer fn: prevents $ pattern interpretation ($$ in app.js!) */
 
 if (html.includes('/*__')) { console.error('unreplaced marker left in template'); process.exit(1); }

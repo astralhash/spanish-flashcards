@@ -27,7 +27,7 @@ python3 -m http.server 8000       # or: npx serve .
   10-min within-session steps before graduating to SM-2-style day intervals
   (again/hard/good/easy), daily new-card quota (default 20, adjustable 5–60),
   overdue-first sessions.
-- **Answer style: Type / Mixed / Flashcard** (Settings) —
+- **Answer style: Type / Mixed / Flashcard** (main menu) —
   - **Typed recall (default)** — write your answer instead of recognizing it;
     accent- and article-tolerant matching, accepts conjugated forms of target
     verbs. Right answers show a green reveal; wrong answers and peeks show
@@ -39,9 +39,14 @@ python3 -m http.server 8000       # or: npx serve .
     (format marked with ✏️ / 🃏).
   - **Flashcard** — flip card plus an optional 4-option *pretest* for new
     words (errorful generation), then self-graded reveal.
-- **Pronunciation on demand** — 🔊 play buttons and "Say it aloud" chips speak
-  Spanish words only when clicked (browser voices, offline); nothing reads
-  aloud automatically.
+- **Pronunciation** — 🔊 buttons/chips and the <kbd>S</kbd> key speak Spanish on
+  demand; optionally every word is spoken automatically as it is revealed
+  (Settings). Two engines: ranked system voices (best installed voice
+  auto-picked, switchable with preview in Settings) and an opt-in **HD neural
+  voice** — Piper models running fully in-browser (WASM), downloaded once
+  (~60–120 MB, cached by the browser) then offline-capable. Falls back to
+  system speech automatically. Space always advances to the next word, even
+  right after using a speaker button.
 - **Cluster challenges** — multiple-choice or typed bursts over word groups:
   weekdays, months, numbers, colors, family, food & drink, body, animals.
   Missed items are re-asked in a replay round, and every challenge ends with
@@ -62,6 +67,7 @@ python3 -m http.server 8000       # or: npx serve .
 | `src/core.cjs` | SRS + challenge logic (pure JS, also a CJS module) |
 | `src/conj.cjs` | Spanish conjugation engine (templates + irregular tables) |
 | `src/app.js` | UI layer (vanilla JS, no framework) |
+| `src/tts.js` | HD neural TTS engine (Piper WASM via CDN, lazy-loaded) |
 | `data/*.json` | vocabulary sources: arrays of `["spanish","english","level","cluster?"]` |
 | `scripts/build.mjs` | merge + validate `data/*.json`, inject counts, emit `index.html` |
 | `scripts/smoke.mjs` | unit tests for `core.cjs` |

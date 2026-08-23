@@ -161,15 +161,18 @@ while (doc.querySelector('#scr-done').hidden && guard++ < 8) {
 }
 ok(!doc.querySelector('#scr-done').hidden, 'practice session completes');
 
-/* ——— settings: switch to flashcard mode ——— */
+/* ——— answer style lives on the main menu: switch to flashcard mode ——— */
+ok(doc.querySelector('#scr-start #ansSeg') && $$('#ansSeg button').length === 3,
+  'answer-style segmented control sits on the main menu (Type/Mixed/Flashcard)');
+const flipBtn = doc.querySelector('#ansSeg button[data-ans="flip"]');
+click(flipBtn);
+await wait(30);
+ok(flipBtn.classList.contains('active'), 'flashcard mode selected');
+ok(/Space/i.test(doc.querySelector('#dirHint').textContent), 'main-page hint explains flashcards (Space reveals)');
+ok(!/Enter/.test(doc.querySelector('#dirHint').textContent), 'flashcard hint does not leak typed-mode instructions');
 click(doc.querySelector('#settingsBtn'));
 await wait(30);
 ok(!doc.querySelector('#modal').hidden, 'settings modal opens');
-ok($$('#ansSeg button').length === 3, 'answer-style segmented control present (Type/Mixed/Flashcard)');
-const flipBtn = doc.querySelector('#ansSeg button[data-ans="flip"]');
-click(flipBtn);
-await wait(20);
-ok(flipBtn.classList.contains('active'), 'flashcard mode selected');
 ok(doc.querySelector('#setPretest').checked === true, 'pretest on by default');
 click(doc.querySelector('#modalClose'));
 await wait(20);
@@ -305,11 +308,10 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
   /* ——— typed challenge: wrong answer & peek wait for Space/click ——— */
   click(doc.querySelector('#chdHome'));
   await wait(30);
-  click(doc.querySelector('#settingsBtn'));
-  await wait(30);
   click(doc.querySelector('#ansSeg button[data-ans="type"]'));
-  click(doc.querySelector('#modalClose'));
-  await wait(20);
+  await wait(30);
+  ok(/Enter/.test(doc.querySelector('#dirHint').textContent) && !/Space to reveal/.test(doc.querySelector('#dirHint').textContent),
+    'main-page hint switches to typed instructions (Enter checks, no flashcard reveal text)');
   click(doc.querySelector('#chalListStart .chal-tile:not(:disabled)'));
   await wait(40);
   ok(!doc.querySelector('#scr-chal').hidden && !doc.querySelector('#chTypeWrap').hidden, 'typed challenge active after switching style');
@@ -380,12 +382,11 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
   ok(!doc.querySelector('#scr-start').hidden, 'aborting typed challenge returns to the main menu');
 
   /* ——— mixed mode: type + flashcard in one run ——— */
-  click(doc.querySelector('#settingsBtn'));
-  await wait(30);
   ok($$('#ansSeg button').length === 3, 'answer style offers Type / Mixed / Flashcard');
   click(doc.querySelector('#ansSeg button[data-ans="mix"]'));
-  click(doc.querySelector('#modalClose'));
-  await wait(20);
+  await wait(30);
+  ok(/Enter/.test(doc.querySelector('#dirHint').textContent) && /Space/i.test(doc.querySelector('#dirHint').textContent),
+    'mixed-mode hint covers both formats (Enter checks, Space reveals)');
   ok(JSON.parse(window.localStorage.getItem('vocabes.v1.set') || '{}').ans === 'mix', 'mixed mode persisted');
   click(doc.querySelector('#startBtn'));
   await wait(30);
