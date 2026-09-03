@@ -240,6 +240,8 @@ kbd {
 .g-hard { --c: var(--warn); }
 .g-good { --c: var(--ok); }
 .g-easy { --c: var(--info); }
+/* home-row alternative (j k l ö) shown dimmed next to the 1–4 shortcut */
+.g kbd.alt { opacity: .5; margin-left: 3px; padding: 1px 4px; }
 
 /* ============ challenge ============ */
 .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; max-width: 520px; margin-top: 10px; }

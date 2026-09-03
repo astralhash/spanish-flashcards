@@ -356,8 +356,9 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
   ok(!doc.querySelector('#scr-done').hidden, 'flashcard session complete after grading (' + 'all' + ')');
   ok(doc.querySelector('#recapBox').hidden, 'no words-to-watch when everything was graded good');
 
-  /* ——— German (QWERTZ) home row: ö k l grade like 4 2 3 — dedicated round
-     with the pretest off so every card is a rating card ——— */
+  /* ——— right-hand home row: j k l ö grade like 1 2 3 4 on any layout —
+     dedicated round with the pretest off so every card is a rating card;
+     k is pressed FIRST, before any ö/layout detection, like on a US keyboard ——— */
   click(doc.querySelector('#homeBtn'));
   await wait(30);
   click(doc.querySelector('#settingsBtn'));
@@ -374,16 +375,19 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
     'pretest off: every card opens as a rating card');
   key(' ');
   await wait(15);
-  ok(key('ö') === false, 'ö (German home row) grades "easy"');
+  ok(key('k') === false, 'k grades "hard" with no prior layout detection');
   await wait(30);
-  ok(!doc.querySelector('#flip').classList.contains('flipped'), 'ö grades to the next question');
+  ok(!doc.querySelector('#flip').classList.contains('flipped'), 'k grades to the next question');
+  ok($$('#grades kbd.alt:not([hidden])').length === 3, 'grade buttons show the j/k/l home-row hints');
+  ok(doc.querySelector('#altOe').hidden, 'ö hint hidden until the layout is known to produce ö');
   key(' ');
   await wait(15);
-  ok(key('k') === false, 'k (German home row) grades "hard"');
+  ok(key('ö') === false, 'ö grades "easy"');
   await wait(30);
+  ok(!doc.querySelector('#altOe').hidden, 'pressing ö reveals the ö hint on the Easy button');
   key(' ');
   await wait(15);
-  ok(key('l') === false, 'l (German home row) grades "good"');
+  ok(key('l') === false, 'l grades "good"');
   await wait(30);
   key(' ');
   await wait(15);
@@ -396,7 +400,7 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
     key('3');
     await wait(30);
   }
-  ok(!doc.querySelector('#scr-done').hidden, 'rating-key round completes (ö/k/l behave like 4/2/3)');
+  ok(!doc.querySelector('#scr-done').hidden, 'rating-key round completes (j/k/l/ö behave like 1/2/3/4)');
   ok(doc.querySelector('#recapBox').hidden, 'rating-key round stays recap-clean (easy/hard/good only)');
   /* pretest back on for the following sections */
   click(doc.querySelector('#homeBtn'));
@@ -479,7 +483,7 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
   ok(doc.querySelector('#flip').classList.contains('flipped'), 'Space flips to the answer side');
   ok(normWord(doc.querySelector('#backWord')) === normWord({ textContent: missRow[0] }),
     'grade buttons sit on the REAL answer face: Spanish back for en-es');
-  ok(key('j') === false, 'j (German home row) grades "again"');
+  ok(key('j') === false, 'j grades "again"');
   await wait(80);
   ok(doc.querySelector('#scr-done').hidden, '"again" requeues the failed card within the session');
   ok(!doc.querySelector('#flip').classList.contains('flipped'), 'requeued card returns question-side-up');

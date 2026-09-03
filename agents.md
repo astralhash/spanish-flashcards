@@ -123,6 +123,14 @@ to hit round totals — exceeding targets is fine.
   the card it was spoken for: `renderCard`/`renderChalQ` cancel stale speech,
   and challenge MC rounds use `advanceAfterSpeech()` so the next question only
   appears once the revealed word has finished playing (capped at ~3.2 s).
+- **Rating keys**: `1`–`4` grade everywhere a 4-option gesture exists
+  (flashcard answer face, pretest picks, challenge MC). The right-hand home
+  row does the same on any layout — `j`→again, `k`→hard, `l`→good, `ö`→easy
+  (`gradeKeyOf` in `src/app.js`) — and every grading keydown calls
+  `preventDefault()`, so the key can never leak into the next typed input.
+  The flashcard grade buttons show the home-row letters (`j k l`, plus `ö`
+  on the Easy button once the layout is known to produce it — eager via
+  `navigator.keyboard.getLayoutMap`, lazy via a real `ö` keydown).
 - Failed cards are re-queued once per session (`sess.revoked`) and recorded in
   the "words to watch" recap; challenges replay missed items once in a final
   round (`challenge.missed`/`allMissed`, one replay round max).

@@ -248,6 +248,8 @@ kbd {
 .g-hard { --c: var(--warn); }
 .g-good { --c: var(--ok); }
 .g-easy { --c: var(--info); }
+/* home-row alternative (j k l ö) shown dimmed next to the 1–4 shortcut */
+.g kbd.alt { opacity: .5; margin-left: 3px; padding: 1px 4px; }
 
 /* ============ challenge ============ */
 .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; max-width: 520px; margin-top: 10px; }
@@ -641,10 +643,10 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
         <div class="badges"><span class="badge">answer</span></div>
         <div id="backWord" class="word"></div>
         <div id="grades" class="grades">
-          <button class="g g-again" data-q="0"><kbd>1</kbd> Again</button>
-          <button class="g g-hard" data-q="1"><kbd>2</kbd> Hard</button>
-          <button class="g g-good" data-q="2"><kbd>3</kbd> Good</button>
-          <button class="g g-easy" data-q="3"><kbd>4</kbd> Easy</button>
+          <button class="g g-again" data-q="0"><kbd>1</kbd><kbd class="alt">j</kbd> Again</button>
+          <button class="g g-hard" data-q="1"><kbd>2</kbd><kbd class="alt">k</kbd> Hard</button>
+          <button class="g g-good" data-q="2"><kbd>3</kbd><kbd class="alt">l</kbd> Good</button>
+          <button class="g g-easy" data-q="3"><kbd>4</kbd><kbd class="alt" id="altOe" hidden>ö</kbd> Easy</button>
         </div>
       </div>
     </div>
@@ -3684,11 +3686,18 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
       toast('Fresh start');
     });
 
-    var germanHome = false;
+    /* rating keys: 1–4, plus the right-hand home row j k l ö (j=1 … ö=4) so
+       grading never leaves the base row — works on any keyboard layout.
+       The grade buttons show the home-row letters; the ö hint appears only
+       once the layout is known to produce ö (German-family keyboard). */
+    function showOeHint() {
+      var b = document.getElementById('altOe');
+      if (b) b.hidden = false;
+    }
     try {
       if (navigator.keyboard && navigator.keyboard.getLayoutMap) {
         navigator.keyboard.getLayoutMap().then(function (m) {
-          if (m.get('Semicolon') === 'ö') germanHome = true;
+          if (m.get('Semicolon') === 'ö') showOeHint();
         }, function () {});
       }
     } catch (e) {}
@@ -3696,12 +3705,10 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
       if (ev.metaKey || ev.ctrlKey || ev.altKey) return -1;
       if (ev.key >= '1' && ev.key <= '4') return parseInt(ev.key, 10) - 1;
       var k = ev.key.toLowerCase();
-      if (k === 'ö') { germanHome = true; return 3; }
-      if (germanHome) {
-        if (k === 'j') return 0;
-        if (k === 'k') return 1;
-        if (k === 'l') return 2;
-      }
+      if (k === 'j') return 0;
+      if (k === 'k') return 1;
+      if (k === 'l') return 2;
+      if (k === 'ö') { showOeHint(); return 3; }
       return -1;
     }
 

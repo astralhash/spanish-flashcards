@@ -1459,11 +1459,18 @@
       toast('Fresh start');
     });
 
-    var germanHome = false;
+    /* rating keys: 1–4, plus the right-hand home row j k l ö (j=1 … ö=4) so
+       grading never leaves the base row — works on any keyboard layout.
+       The grade buttons show the home-row letters; the ö hint appears only
+       once the layout is known to produce ö (German-family keyboard). */
+    function showOeHint() {
+      var b = document.getElementById('altOe');
+      if (b) b.hidden = false;
+    }
     try {
       if (navigator.keyboard && navigator.keyboard.getLayoutMap) {
         navigator.keyboard.getLayoutMap().then(function (m) {
-          if (m.get('Semicolon') === 'ö') germanHome = true;
+          if (m.get('Semicolon') === 'ö') showOeHint();
         }, function () {});
       }
     } catch (e) {}
@@ -1471,12 +1478,10 @@
       if (ev.metaKey || ev.ctrlKey || ev.altKey) return -1;
       if (ev.key >= '1' && ev.key <= '4') return parseInt(ev.key, 10) - 1;
       var k = ev.key.toLowerCase();
-      if (k === 'ö') { germanHome = true; return 3; }
-      if (germanHome) {
-        if (k === 'j') return 0;
-        if (k === 'k') return 1;
-        if (k === 'l') return 2;
-      }
+      if (k === 'j') return 0;
+      if (k === 'k') return 1;
+      if (k === 'l') return 2;
+      if (k === 'ö') { showOeHint(); return 3; }
       return -1;
     }
 
