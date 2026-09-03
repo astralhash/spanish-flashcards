@@ -142,8 +142,11 @@
   /* SM-2-ish grading with learning steps. q: 0=again 1=hard 2=good 3=easy. Mutates state.
      New cards (st != null) walk STEPS before graduating: correct answers advance a
      step (1 min → 10 min), 'hard' repeats the current step, 'again' restarts it.
-     Graduated cards (st == null) use the classic SM-2-style intervals. */
-  function applyGrade(state, id, q, now) {
+     Graduated cards (st == null) use the classic SM-2-style intervals.
+     opts.pretest (failed first-contact guess): schedules exactly like 'again'
+     but WITHOUT the lapse/ease penalty — a word the learner has never studied
+     cannot lapse, and must not drift toward challenge exclusion (l > 5). */
+  function applyGrade(state, id, q, now, opts) {
     now = now || Date.now();
     var c = state.cards[id];
     if (!c) {
@@ -153,7 +156,8 @@
       c.st = 0;                               /* pre-update untouched card: same */
     }
     if (q === 0) {
-      c.l += 1; c.r = 0; c.e = Math.max(1.3, c.e - 0.2);
+      if (!(opts && opts.pretest)) { c.l += 1; c.e = Math.max(1.3, c.e - 0.2); }
+      c.r = 0;
       if (c.st != null) c.d = now + STEPS[c.st] * MIN;   /* restart the current step */
       else { c.i = 0; c.d = now + 10 * MIN; }            /* relearning for lapsed cards */
       return 'again';

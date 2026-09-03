@@ -302,6 +302,23 @@
       window.speechSynthesis.speak(u);
     } catch (e) { /* speech unavailable */ }
   }
+  /* stop ongoing narration — used when a new card/question renders, so audio
+     from the previous word never bleeds over the current one */
+  function stopSpeech() {
+    try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {}
+    try { if (window.NeuralTTS) NeuralTTS.stop(); } catch (e) {}
+  }
+  /* is narration currently playing? (system voices and/or the HD engine) */
+  function ttsBusy() {
+    try {
+      if (window.speechSynthesis && (window.speechSynthesis.speaking || window.speechSynthesis.pending)) return true;
+    } catch (e) {}
+    try {
+      if (settings.hd && window.NeuralTTS && NeuralTTS.status().status === 'loading') return true;
+    } catch (e) {}
+    return false;
+  }
+
   /* The Spanish word currently on screen — or null when showing it would spoil
      the answer (e.g. the prompt of an en-es round before it is revealed). */
   function curEsWord() {
@@ -418,11 +435,11 @@
                  : settings.dir === 'en-es' ? 'English → Spanish' : 'mixed directions';
     var how;
     if (settings.ans === 'type') {
-      how = ['✏️ Typed', 'type the translation, <kbd>Enter</kbd> checks it'];
+      how = ['✏️ Typed', 'type the translation · <kbd>Enter</kbd> checks · empty <kbd>Enter</kbd> shows the answer'];
     } else if (settings.ans === 'flip') {
       how = ['🃏 Flashcards', 'click or press <kbd>Space</kbd> to reveal · <kbd>1</kbd>–<kbd>4</kbd> grades'];
     } else {
-      how = ['🔀 Mixed', 'typed cards (<kbd>Enter</kbd> checks) & flashcards (<kbd>Space</kbd> reveals) alternate'];
+      how = ['🔀 Mixed', 'typed cards (<kbd>Enter</kbd> checks · empty reveals) & flashcards (<kbd>Space</kbd> reveals) alternate'];
     }
     if (settings.tts && !settings.autoSpeak) {
       how[1] += ' · <kbd>S</kbd> says the word';
@@ -467,7 +484,7 @@
     sess = {
       ids: s.ids, total: s.total, i: 0, correct: 0, xp: 0, best: 0,
       revoked: new Set(), skippedDue: s.skippedDue,
-      missed: [], pre: null, preLocked: false, typed: 'idle', curDir: settings.dir
+      missed: [], pre: null, preLocked: false, preWaiting: false, preCorrect: false, typed: 'idle', curDir: settings.dir
     };
     if (s.total === 0) { renderDone(s.skippedDue ? 'All caught up — the rest awaits tomorrow ⏳' : 'Nothing due right now 🎉', 0); return; }
     show('scr-quiz');
@@ -489,6 +506,7 @@
   function renderCard() {
     var e = entryById(sess.ids[sess.i]);
     hideConj();
+    stopSpeech();                     /* a new card opens: silence the previous word */
 
     var card = state.cards[e.id];
     $('#newBadge').hidden = !(card ? (card.r === 0 || C.inSteps(card)) : true);
@@ -510,16 +528,23 @@
   }
 
   /* ---------- flashcard mode ---------- */
-  function renderFlipCard(e) {
+  /* answerUp: render straight to the ANSWER side (where the grade buttons live —
+     EN face for es-en, ES face for en-es). Used after a pretest: the learner
+     rates immediately, without a meaningless extra flip of a stale card. */
+  function renderFlipCard(e, answerUp) {
     var dir = sess.curDir;
     var front = dir === 'es-en' ? e.es : e.en;
     var back = dir === 'es-en' ? e.en : e.es;
     var flip = $('#flip');
+    var faces = $$('#flip .face');
     flip.classList.remove('flipped', 'reload');
     flip.style.transition = 'none';
+    faces.forEach(function (f) { f.style.transition = 'none'; });
     void flip.offsetWidth;                 /* snap back without animating */
+    if (answerUp) flip.classList.add('flipped');
+    void flip.offsetWidth;                 /* commit (possibly answer-up) while transitions are off */
     flip.style.transition = '';
-    void flip.offsetWidth;
+    faces.forEach(function (f) { f.style.transition = ''; });
     flip.classList.add('reload');
     renderWord($('#frontWord'), front, dir === 'es-en');
     renderWord($('#backWord'), back, dir === 'en-es');
@@ -537,9 +562,12 @@
   }
 
   /* ---------- pretest (new words, flashcard mode) ---------- */
+  /* The pretest is self-grading, one try: first-try correct commits grade 'good',
+     a wrong guess commits an 'again'-style step restart (no lapse marking — the
+     card was never studied). There is NO rating card afterwards. */
   function renderPretest(e) {
     var q = C.buildPretest(entries(), e, sess.curDir);
-    sess.pre = q; sess.preLocked = false;
+    sess.pre = q; sess.preLocked = false; sess.preWaiting = false; sess.preCorrect = false;
     $('#preFb').hidden = true;
     renderWord($('#preWord'), q.d === 'es-en' ? q.es : q.en, false, true);
     var wrap = $('#preOpts');
@@ -560,6 +588,7 @@
     var btns = $$('#preOpts button');
     var chosen = btns[idx];
     var ok = chosen.textContent.trim().toLowerCase() === q.answer.trim().toLowerCase();
+    sess.preCorrect = ok;
     if (ok) {
       chosen.classList.add('right');
       sndGood();
@@ -573,19 +602,24 @@
       }
     }
     btns.forEach(function (b) { b.classList.add('lock'); });
-    setTimeout(function () {
-      if (!sess) return;
-      /* reveal the card with the answer side up → the learner rates at once */
-      var flip = $('#flip');
-      flip.classList.add('flipped');
-      setQuizVisibility('flip');
-      sess.pre = null;
-    }, 1150);
+    /* the feedback holds until the learner advances (click anywhere on the
+       panel, Space or Enter) — nothing disappears on a timer */
+    sess.preWaiting = true;
+  }
+
+  /* leave the pretest feedback: commit the self-grade and move straight to the
+     next card. quiet: the pick already played its sound. */
+  function preAdvance() {
+    if (!sess || !sess.pre || !sess.preWaiting) return;
+    var ok = !!sess.preCorrect;
+    sess.pre = null;
+    sess.preWaiting = false;
+    grade(ok ? 2 : 0, ok ? { quiet: true } : { quiet: true, pretest: true });
   }
 
   /* ---------- typed mode ---------- */
-  var TYPE_ASK = ['#typeDir', '#typeWord', '#typeInput', '#typeActions'];
-  /* 'ask': show the question, input and actions.
+  var TYPE_ASK = ['#typeDir', '#typeWord', '#typeInput'];
+  /* 'ask': show the question and the answer input.
      'reveal': show only the "question = answer" row. checkType() re-shows the input
      afterwards so the learner's own green/red answer stays visible above it —
      a peek has nothing to show there and leaves it hidden. */
@@ -606,7 +640,6 @@
     var inp = $('#typeInput');
     inp.value = ''; inp.disabled = false;
     inp.classList.remove('ok', 'bad');
-    $('#typeCheck').disabled = false;
     $('#typeFb').hidden = true;
     $('#typeVerdict').hidden = true;
     $('#typeNext').hidden = true;
@@ -691,14 +724,13 @@
     var e = entryById(sess.ids[sess.i]);
     var dir = sess.curDir;
     var guess = $('#typeInput').value;
-    if (!guess.trim()) return;
+    if (!guess.trim()) { peekType(); return; }   /* empty Enter = don't know → reveal */
     var ok = typedMatch(typeTarget(e, dir), guess);
     sess.typed = ok ? 'ok' : 'miss';
     var inp = $('#typeInput');
     inp.disabled = true;
     inp.classList.remove('ok', 'bad');
     inp.classList.add(ok ? 'ok' : 'bad');     /* instant: the typed word turns green/red */
-    $('#typeCheck').disabled = true;
     revealType(e, dir, ok ? 'ok' : 'miss');
     inp.hidden = false;                       /* the colored answer stays above the reveal */
     /* correct, wrong or peeked: the correct answer stays on screen until
@@ -711,15 +743,17 @@
     var e = entryById(sess.ids[sess.i]);
     sess.typed = 'peek';
     $('#typeInput').disabled = true;
-    $('#typeCheck').disabled = true;
     revealType(e, sess.curDir, 'peek');
     awaitType();
   }
 
-  function grade(q) {
+  /* opts.quiet:   outcome sounds already played (pretest pick) — don't double-fire
+     opts.pretest: failed FIRST-CONTACT guess → 'again' scheduling without lapse
+                   marking (forwarded to Core.applyGrade) */
+  function grade(q, opts) {
     if (!sess) return;
     var id = sess.ids[sess.i];
-    var res = C.applyGrade(state, id, q);
+    C.applyGrade(state, id, q, null, opts);
     state.total++;
     if (q === 0) {
       state.streak = 0;
@@ -727,7 +761,7 @@
       /* remember for the "words to watch" recap */
       var e = entryById(id);
       if (e && !sess.missed.some(function (m) { return m.id === id; })) sess.missed.push({ id: id, es: e.es, en: e.en });
-      sndBad();
+      if (!(opts && opts.quiet)) sndBad();
     } else {
       state.correct++;
       state.streak++;
@@ -736,15 +770,15 @@
       sess.correct++;
       sess.xp += C.xpFor(q);
       sess.best = Math.max(sess.best, state.streak);
-      sndGood();
+      if (!(opts && opts.quiet)) sndGood();
     }
     saveState();
     refreshPills();
     sess.i++;
     if (sess.i >= sess.ids.length) endSession();
     else renderCard();
-    if (res === 'again') toast('Back into the queue — you will see it again this session');
-    else if (C.inSteps(state.cards[id])) toast('New word — another quick pass later this session');
+    /* no toast after grading: the requeue / learning-step mechanics are visible
+       from the flow itself (the word simply comes back), so popups were noise */
   }
 
   function endSession() {
@@ -842,19 +876,19 @@
     sndTic();
   }
 
-  /* typed round chrome: question + input + actions (ask) vs. only the reveal row.
+  /* typed round chrome: question + input (ask) vs. only the reveal row.
      chCheckType() re-shows the input afterwards so the green/red answer stays
      visible; a peek has nothing to show there and leaves it hidden. */
   function setChalAskMode(ask) {
     $('#chDir').hidden = !ask;
     $('#chWord').hidden = !ask;
     $('#chTypeInput').hidden = !ask;
-    $('#chTypeActions').hidden = !ask;
   }
 
   function renderChalQ() {
     var q = challenge.qs[challenge.i];
     hideConj();
+    stopSpeech();                     /* a new question opens: silence the previous word */
     $('#chDir').textContent =
       (settings.ans === 'mix' ? (q.typed ? '✏️ ' : '🃏 ') : '') +
       (q.d === 'es-en' ? 'Spanish → English' : 'English → Spanish') + (q.typed ? ' · type your answer' : '');
@@ -871,7 +905,6 @@
       tw.hidden = false;
       inp.value = ''; inp.disabled = false;
       inp.classList.remove('ok', 'bad');
-      $('#chTypeCheck').disabled = false;
       $('#chTypeNext').hidden = true;
       fb.hidden = true;
       fb.classList.remove('fb-ok', 'fb-bad');
@@ -923,7 +956,21 @@
     btns.forEach(function (b) { b.classList.add('lock'); });
     /* autoSpeak: the answer (and in es-en questions, the word itself) is now shown */
     if (settings.tts && settings.autoSpeak) speak(q.es);
-    setTimeout(chAdvance, 620);
+    advanceAfterSpeech(620);
+  }
+
+  /* MC rounds advance automatically — but only once the revealed word has been
+     heard: hold the resolution while TTS is talking (capped, in case speech is
+     unavailable or stuck), so the next question never opens mid-word. */
+  function advanceAfterSpeech(minMs) {
+    var t0 = Date.now();
+    (function tick() {
+      if (!challenge) return;                    /* aborted meanwhile */
+      var dt = Date.now() - t0;
+      var busy = settings.tts && settings.autoSpeak ? ttsBusy() : false;
+      if (dt >= minMs && (!busy || dt >= 3200)) chAdvance();
+      else setTimeout(tick, 80);
+    })();
   }
 
   /* Prominent reveal for typed challenge answers — same pair row as the review. */
@@ -940,7 +987,7 @@
     if (!challenge || challenge.locked || !challenge.chInput) return;
     var q = challenge.qs[challenge.i];
     var guess = $('#chTypeInput').value;
-    if (!guess.trim()) { $('#chTypeInput').focus(); return; }
+    if (!guess.trim()) { chPeekType(); return; }   /* empty Enter = don't know → reveal */
     challenge.locked = true;
     challenge.chInput = false;
     var target = q.d === 'es-en' ? q.en : q.es;
@@ -949,7 +996,6 @@
     inp.disabled = true;
     inp.classList.remove('ok', 'bad');
     inp.classList.add(ok ? 'ok' : 'bad');     /* instant: the typed word turns green/red */
-    $('#chTypeCheck').disabled = true;
     if (ok) {
       challenge.correct++; challenge.streak++;
       challenge.best = Math.max(challenge.best, challenge.streak);
@@ -976,7 +1022,6 @@
     pushMissed(q);
     revealChal(q, 'peek');
     $('#chTypeInput').disabled = true;
-    $('#chTypeCheck').disabled = true;
     challenge.waiting = true;
     $('#chTypeNext').hidden = false;
   }
@@ -1165,9 +1210,14 @@
     $('#againBtn').addEventListener('click', startSession);
     $('#homeBtn').addEventListener('click', function () { show('scr-start'); renderStart(); refreshPills(); });
     $('#recapPractice').addEventListener('click', practiceMissed);
-    $('#typeCheck').addEventListener('click', checkType);
-    $('#typePeek').addEventListener('click', peekType);
     $('#typeNext').addEventListener('click', continueTyped);
+    /* answered pretest: a click anywhere on the panel (except the option
+       buttons themselves — their click is the ANSWER and must not bubble
+       straight into "advance") moves on to the rating card */
+    $('#pretestPanel').addEventListener('click', function (ev) {
+      if (ev.target && ev.target.closest && ev.target.closest('#preOpts button')) return;
+      preAdvance();
+    });
     /* after a miss/peek, a click anywhere else on the typed panel advances
        (clicks on controls keep their own behavior) */
     $('#typePanel').addEventListener('click', function (ev) {
@@ -1184,8 +1234,6 @@
         else checkType();
       }
     });
-    $('#chTypeCheck').addEventListener('click', chCheckType);
-    $('#chTypePeek').addEventListener('click', chPeekType);
     $('#chTypeNext').addEventListener('click', continueChalTyped);
     $('#chal-q-card').addEventListener('click', function (ev) {
       if (ev.target && ev.target.closest && ev.target.closest('button, input, .say-btn')) return;
@@ -1324,6 +1372,27 @@
       toast('Fresh start');
     });
 
+    var germanHome = false;
+    try {
+      if (navigator.keyboard && navigator.keyboard.getLayoutMap) {
+        navigator.keyboard.getLayoutMap().then(function (m) {
+          if (m.get('Semicolon') === 'ö') germanHome = true;
+        }, function () {});
+      }
+    } catch (e) {}
+    function gradeKeyOf(ev) {
+      if (ev.metaKey || ev.ctrlKey || ev.altKey) return -1;
+      if (ev.key >= '1' && ev.key <= '4') return parseInt(ev.key, 10) - 1;
+      var k = ev.key.toLowerCase();
+      if (k === 'ö') { germanHome = true; return 3; }
+      if (germanHome) {
+        if (k === 'j') return 0;
+        if (k === 'k') return 1;
+        if (k === 'l') return 2;
+      }
+      return -1;
+    }
+
     document.addEventListener('keydown', function (ev) {
       if (!$('#modal').hidden) {
         if (ev.key === 'Escape') closeModal();
@@ -1342,8 +1411,14 @@
       var chal = !$('#scr-chal').hidden;
       if (quiz) {
         if (sess && sess.pre && !$('#pretestPanel').hidden) {
-          /* pretest mode: 1–4 picks an option */
-          if (ev.key >= '1' && ev.key <= '4' && !sess.preLocked) { ev.preventDefault(); preAnswer(parseInt(ev.key, 10) - 1); }
+          if (sess.preWaiting) {
+            /* answered: the feedback holds until the learner advances */
+            if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); preAdvance(); }
+            return;
+          }
+          /* fresh pretest: 1–4 picks an option */
+          var pk = gradeKeyOf(ev);
+          if (pk >= 0 && !sess.preLocked) { ev.preventDefault(); preAnswer(pk); }
           return;
         }
         if (!$('#typePanel').hidden) {
@@ -1366,7 +1441,10 @@
           ev.preventDefault(); flipCard();
         }
         else if (ev.key === 'Escape') { ev.preventDefault(); if (sess) endSession(); }
-        else if (ev.key >= '1' && ev.key <= '4' && $('#flip').classList.contains('flipped')) grade(parseInt(ev.key, 10) - 1);
+        else if ($('#flip').classList.contains('flipped')) {
+          var gk = gradeKeyOf(ev);
+          if (gk >= 0) { ev.preventDefault(); grade(gk); }
+        }
       } else if (chal) {
         var cq = challenge ? challenge.qs[challenge.i] : null;
         var inChCtrl = ev.target && ev.target.closest && ev.target.closest('#chTypeWrap button:not(.say-btn), #chTypeWrap input');
@@ -1375,7 +1453,10 @@
           if (!inChCtrl && (ev.key === ' ' || ev.key === 'Enter')) { ev.preventDefault(); continueChalTyped(); }
           else if (ev.key === 'Escape') { $('#chQuit').click(); }
         }
-        else if (cq && !cq.typed && ev.key >= '1' && ev.key <= '4') { ev.preventDefault(); chAnswer(parseInt(ev.key, 10) - 1); }
+        else if (cq && !cq.typed) {
+          var ck = gradeKeyOf(ev);
+          if (ck >= 0) { ev.preventDefault(); chAnswer(ck); }
+        }
         else if (cq && cq.typed && ev.key === 'Enter' && !inChCtrl && !$('#chTypeInput').disabled) { ev.preventDefault(); chCheckType(); }
         else if (ev.key === 'Escape') { $('#chQuit').click(); }
       }

@@ -81,8 +81,21 @@ to hit round totals — exceeding targets is fine.
 - **Answer style setting** `settings.ans`: `'type'` (default) | `'mix'` | `'flip'`.
   Mix randomly picks typed vs. flashcard per card (challenge questions get a
   fixed `q.typed` flag at build time). Flashcard rounds may show a 4-option
-  **pretest** for never-seen cards (`settings.pretest`) — the pretest never
-  touches SRS state.
+  **pretest** for never-seen cards (`settings.pretest`). The pretest is
+  **self-grading**, one try: first-try correct commits grade 'good'; a wrong
+  guess commits an 'again'-style step restart **without** lapse/ease marking
+  (`applyGrade(..., { pretest: true })` — a failed first contact is not a lapse)
+  plus the usual once-per-session requeue and words-to-watch recap. The ✓/✗
+  feedback holds until the learner advances (panel click / Space / Enter);
+  `preAdvance()` then commits and moves straight on — there is **no rating card
+  after a pretest**. Regular flashcard rounds keep their 1–4 buttons on the
+  answer face (`renderFlipCard` maps back := answer; EN for es-en, ES for
+  en-es). Never just toggle `.flipped` without re-rendering: that
+  resurfaces a stale card.
+- **Typed rounds have no Check / Show-answer buttons**: Enter checks, and Enter
+  on an empty field reveals the answer (graded like a peek = 'again'). The
+  continue button is labeled plain "Continue" but silently accepts Space,
+  Enter and clicks anywhere on the panel.
 - **Typed matching**: `Core.answerMatches`/`Core.normalizeAnswer` are
   accent-insensitive, punctuation-insensitive and article-tolerant; the UI
   (`typedMatch` in `src/app.js`) additionally accepts any conjugated form of
@@ -96,7 +109,10 @@ to hit round totals — exceeding targets is fine.
   and `chAnswer`. Engines (`settings.tts`): ranked system voices or the opt-in
   HD neural voice (`src/tts.js`, Piper WASM via CDN). Speaker buttons blur on
   click and `.say-btn` is exempt from the "focused control" keydown guards, so
-  Space always advances instead of re-triggering audio.
+  Space always advances instead of re-triggering audio. Narration belongs to
+  the card it was spoken for: `renderCard`/`renderChalQ` cancel stale speech,
+  and challenge MC rounds use `advanceAfterSpeech()` so the next question only
+  appears once the revealed word has finished playing (capped at ~3.2 s).
 - Failed cards are re-queued once per session (`sess.revoked`) and recorded in
   the "words to watch" recap; challenges replay missed items once in a final
   round (`challenge.missed`/`allMissed`, one replay round max).

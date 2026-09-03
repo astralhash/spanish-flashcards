@@ -129,6 +129,22 @@ const p2 = Core.buildPretest(entries, entries[0], 'en-es');
 ok(p2 && p2.opts.indexOf(entries[0].es) !== -1, 'buildPretest en-es: Spanish answer among options');
 ok(p2.opts.every((o) => typeof o === 'string' && o.length > 0), 'pretest options non-empty');
 
+/* self-grading pretest: a wrong FIRST-contact guess reschedules like 'again'
+   but marks no lapse and drops no ease — the word was never studied */
+{
+  const stP = Core.defaultState();
+  const idF = entries[10].id, idG = entries[11].id;
+  Core.applyGrade(stP, idF, 0, T, { pretest: true });
+  const cF = stP.cards[idF];
+  ok(cF.st === 0 && cF.l === 0 && cF.e === 2.5, 'failed pretest: stays in steps, no lapse, ease untouched');
+  ok(cF.d === T + MIN, 'failed pretest: due after the current step (1 min)');
+  ok(Core.inSteps(cF), 'failed pretest: card remains in learning steps');
+  Core.applyGrade(stP, idG, 0, T);
+  ok(stP.cards[idG].l === 1 && stP.cards[idG].e === 2.3, 'a regular again still records lapse + ease drop');
+  const rG = Core.applyGrade(stP, idF, 2, T);
+  ok(rG === 'good' && stP.cards[idF].st === 1 && stP.cards[idF].d === T + 10 * MIN, 'correct pretest grades like good: advances a step');
+}
+
 /* typed matching: accents, articles, junk */
 ok(Core.answerMatches('la mesa', 'MESÁ'), 'matches ignoring accents');
 ok(Core.answerMatches('el tiempo', 'tiempo'), 'matches ignoring leading article');

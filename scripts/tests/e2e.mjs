@@ -17,7 +17,7 @@ const dom = new JSDOM(html, {
   beforeParse(window) {
     window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
     window.confirm = () => true;
-    window.speechSynthesis = { speak() {}, cancel() {}, getVoices() { return []; } };
+    window.speechSynthesis = { speak() {}, cancel() {}, getVoices() { return []; }, speaking: false };
     window.addEventListener('error', (e) => errors.push((e.error && e.error.message) || e.message));
   },
 });
@@ -102,8 +102,7 @@ ok(total === 20, 'session has 20 cards: ' + total);
      doc.querySelector('#typeVerdict').textContent.includes('✗'), 'red ✗ verdict shown');
   ok(!doc.querySelector('#typeInput').hidden && doc.querySelector('#typeInput').classList.contains('bad'),
     'typed input stays visible, turned red');
-  ok(doc.querySelector('#typeWord').hidden && doc.querySelector('#typeActions').hidden,
-    'reveal clears the question and action buttons');
+  ok(doc.querySelector('#typeWord').hidden, 'reveal clears the question word');
   ok(doc.querySelector('#typeInput').disabled, 'input locked after answering');
   ok(!doc.querySelector('#typeNext').hidden, 'Continue button shown after a miss');
   await wait(900);                                   /* no auto-advance for a miss */
@@ -138,6 +137,24 @@ ok(total === 20, 'session has 20 cards: ' + total);
   ok(doc.querySelector('#qcount').textContent.split('/')[0].trim() === '3', 'Space advances after a correct answer');
 }
 
+/* empty field + Enter = "don't know": neutral reveal (no verdict), held like every outcome */
+{
+  const row = findRow(doc.querySelector('#typeWord').textContent);
+  ok(!!row, 'third question resolvable');
+  const input = doc.querySelector('#typeInput');
+  input.value = '';
+  input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await wait(350);
+  ok(!doc.querySelector('#typeFb').hidden && !doc.querySelector('#typeFb').classList.contains('fb-ok') &&
+     !doc.querySelector('#typeFb').classList.contains('fb-bad'), 'empty Enter reveals neutrally (no red/green wash class)');
+  ok(doc.querySelector('#typeVerdict').hidden, 'empty Enter shows no \u2713/\u2717 verdict');
+  ok(doc.querySelector('#typeFbA').textContent.trim() === row[1], 'empty Enter reveals the correct answer');
+  ok(!doc.querySelector('#typeNext').hidden, 'Continue shown after an empty reveal');
+  ok(doc.querySelector('#typeInput').hidden, 'revealed-without-answer round hides the idle input');
+  key(' ');
+  await wait(80);
+}
+
 /* end the session → recap shows the missed word → practice them now */
 click(doc.querySelector('#quitBtn'));
 await wait(40);
@@ -148,13 +165,15 @@ ok(!doc.querySelector('#doneTip').hidden, 'evening-review tip shown after the se
 click(doc.querySelector('#recapPractice'));
 await wait(40);
 ok(!doc.querySelector('#scr-quiz').hidden, 'practice-missed starts a fresh review');
-ok(doc.querySelector('#qcount').textContent.split('/')[1].trim() === '1', 'practice session contains exactly the missed card');
+const missedN = $$('#recapList .recap-item').length;
+ok(doc.querySelector('#qcount').textContent.split('/')[1].trim() === String(missedN),
+  'practice session contains exactly the missed cards (' + missedN + ')');
 /* answer it correctly (green reveal holds → Space advances) until done */
 let guard = 0;
 while (doc.querySelector('#scr-done').hidden && guard++ < 8) {
   const row = findRow(doc.querySelector('#typeWord').textContent);
   doc.querySelector('#typeInput').value = answerFor(row, true);
-  click(doc.querySelector('#typeCheck'));
+  doc.querySelector('#typeInput').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
   await wait(400);
   key(' ');
   await wait(350);
@@ -199,23 +218,27 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
     'correct pretest guess confirmed (green reveal)');
   ok(doc.querySelector('#preFbQ').textContent.replace(/🔊/g, '').trim() === row[0] &&
     doc.querySelector('#preFbA').textContent.trim() === row[1], 'pretest reveal shows question = answer');
-  await wait(1100);                                  /* auto-reveal */
-  ok(doc.querySelector('#flip').classList.contains('flipped'), 'pretest reveal shows the answer side');
-  ok(!doc.querySelector('#flip').hidden, 'flashcard visible after pretest');
+  await wait(1400);                                  /* nothing may auto-advance */
+  ok(!doc.querySelector('#pretestPanel').hidden, 'pretest feedback holds until the learner advances');
+  ok(doc.querySelector('#flip').hidden, 'rating card stays hidden while feedback holds');
+  key(' ');                                          /* advance: the self-grade commits */
+  await wait(80);
+  ok(doc.querySelector('#flip').hidden, 'self-grading pretest: no rating card afterwards');
+  ok(!doc.querySelector('#pretestPanel').hidden, 'advance goes straight to the next new word');
 }
 
-/* keyboard: 1–4 answers the pretest; grades work after the reveal */
+/* keyboard: digits answer the pretest; a correct pick self-grades and moves on */
 {
-  key('3');                                                /* grade the revealed card 1 */
-  await wait(60);
-  const pre2 = doc.querySelector('#pretestPanel');
-  ok(!pre2.hidden, 'next new card: pretest again');
-  key('2');                                                /* keyboard answers the pretest */
-  await wait(1350);
-  ok(doc.querySelector('#flip').classList.contains('flipped'), 'pretest reveal via keyboard works');
-  key('3');                                                /* grade the revealed card 2 */
-  await wait(60);
-  ok(!doc.querySelector('#pretestPanel').hidden, 'flashcard session continues: pretest on card 3');
+  const krow = findRow(doc.querySelector('#preWord').textContent);
+  const kopts = $$('#preOpts button');
+  const kidx = kopts.findIndex((b) => NORM(b.textContent) === NORM(answerFor(krow, true)));
+  key(String(kidx + 1));                             /* keyboard picks the option */
+  await wait(150);
+  ok(!doc.querySelector('#pretestPanel').hidden, 'keyboard answer holds its feedback too');
+  key(' ');                                          /* commit + next card */
+  await wait(80);
+  ok(doc.querySelector('#flip').hidden && !doc.querySelector('#pretestPanel').hidden,
+    'correct keyboard pick self-grades straight into the next pretest');
 }
 
 /* grade the whole session: pretests → reveal → Space (regression) → grade */
@@ -226,13 +249,14 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
       if (doc.querySelector('#scr-quiz').hidden) { ok(false, 'quiz vanished mid-session'); break; }
       const pre = doc.querySelector('#pretestPanel');
       if (!pre.hidden) {
-        click($$('#preOpts button')[Math.floor(Math.random() * 4)]);
-        await wait(1300);
-        /* after the pretest reveal the card is auto-flipped; grade it */
-        if (!doc.querySelector('#flip').hidden && doc.querySelector('#flip').classList.contains('flipped')) {
-          click(doc.querySelector('#grades .g-good'));
-          await wait(30);
-        }
+        /* self-grading: pick the correct option so the session stays recap-clean */
+        const prow = findRow(doc.querySelector('#preWord').textContent);
+        const popts = $$('#preOpts button');
+        const pidx = popts.findIndex((b) => NORM(b.textContent) === NORM(answerFor(prow, true)));
+        click(popts[Math.max(0, pidx)]);
+        await wait(120);
+        key(' ');                                   /* hold released → grade commits, next card */
+        await wait(60);
         continue;
       }
       const flip = doc.querySelector('#flip');
@@ -265,6 +289,144 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
 })().then(async () => {
   ok(!doc.querySelector('#scr-done').hidden, 'flashcard session complete after grading (' + 'all' + ')');
   ok(doc.querySelector('#recapBox').hidden, 'no words-to-watch when everything was graded good');
+
+  /* ——— German (QWERTZ) home row: ö k l grade like 4 2 3 — dedicated round
+     with the pretest off so every card is a rating card ——— */
+  click(doc.querySelector('#homeBtn'));
+  await wait(30);
+  click(doc.querySelector('#settingsBtn'));
+  await wait(30);
+  ok(!doc.querySelector('#modal').hidden, 'settings modal opens for the rating-key round');
+  click(doc.querySelector('#setPretest'));
+  await wait(20);
+  ok(doc.querySelector('#setPretest').checked === false, 'pretest disabled for the rating-key round');
+  click(doc.querySelector('#modalClose'));
+  await wait(20);
+  click(doc.querySelector('#startBtn'));
+  await wait(40);
+  ok(doc.querySelector('#pretestPanel').hidden && !doc.querySelector('#flip').hidden,
+    'pretest off: every card opens as a rating card');
+  key(' ');
+  await wait(15);
+  ok(key('ö') === false, 'ö (German home row) grades "easy"');
+  await wait(30);
+  ok(!doc.querySelector('#flip').classList.contains('flipped'), 'ö grades to the next question');
+  key(' ');
+  await wait(15);
+  ok(key('k') === false, 'k (German home row) grades "hard"');
+  await wait(30);
+  key(' ');
+  await wait(15);
+  ok(key('l') === false, 'l (German home row) grades "good"');
+  await wait(30);
+  key(' ');
+  await wait(15);
+  ok(key('3') === false, 'digit grading preventDefaults (no leak into the next typed input)');
+  await wait(30);
+  ok(!doc.querySelector('#flip').classList.contains('flipped'), '1–4 key grades to the next question');
+  let guardR = 0;
+  while (doc.querySelector('#scr-done').hidden && guardR++ < 60) {
+    if (!doc.querySelector('#flip').classList.contains('flipped')) { key(' '); await wait(15); }
+    key('3');
+    await wait(30);
+  }
+  ok(!doc.querySelector('#scr-done').hidden, 'rating-key round completes (ö/k/l behave like 4/2/3)');
+  ok(doc.querySelector('#recapBox').hidden, 'rating-key round stays recap-clean (easy/hard/good only)');
+  /* pretest back on for the following sections */
+  click(doc.querySelector('#homeBtn'));
+  await wait(30);
+  click(doc.querySelector('#settingsBtn'));
+  await wait(30);
+  click(doc.querySelector('#setPretest'));
+  await wait(20);
+  ok(doc.querySelector('#setPretest').checked === true, 'pretest re-enabled');
+  click(doc.querySelector('#modalClose'));
+  await wait(20);
+
+  /* ——— EN→ES: self-grading fail path + direction invariant of the grade buttons ——— */
+  click(doc.querySelector('#homeBtn'));
+  await wait(30);
+  click(doc.querySelector('#dirSeg button[data-dir="en-es"]'));
+  await wait(30);
+  ok($$('#dirSeg button').find((b) => b.dataset.dir === 'en-es').classList.contains('active'),
+    'EN→ES direction selected');
+  click(doc.querySelector('#startBtn'));
+  await wait(60);
+  let missRow = null;
+  {
+    ok(!doc.querySelector('#pretestPanel').hidden, 'en-es: brand-new card opens with the pretest');
+    missRow = findRow(doc.querySelector('#preWord').textContent);
+    ok(!!missRow, 'en-es pretest resolvable');
+    ok(normWord(doc.querySelector('#preWord')) === NORM(missRow[1]), 'en-es prompt is the ENGLISH word');
+    const popts = $$('#preOpts button');
+    const wrongIdx = popts.findIndex((b) => NORM(b.textContent) !== NORM(missRow[0]));
+    click(popts[wrongIdx]);                          /* wrong on purpose (single try) */
+    await wait(350);
+    ok(!doc.querySelector('#preFb').hidden && doc.querySelector('#preFb').classList.contains('fb-bad'),
+      'wrong pretest guess shows the red reveal');
+    await wait(1200);
+    ok(!doc.querySelector('#pretestPanel').hidden, 'failed-pick feedback also holds for input');
+    key(' ');
+    await wait(80);
+    ok(doc.querySelector('#flip').hidden, 'a failed pretest also never opens a rating card');
+  }
+
+  /* finish the session: every remaining pretest answered correctly */
+  let guardE = 0;
+  while (doc.querySelector('#scr-done').hidden && guardE++ < 90) {
+    if (!doc.querySelector('#pretestPanel').hidden) {
+      const r = findRow(doc.querySelector('#preWord').textContent);
+      const o = $$('#preOpts button');
+      const i = o.findIndex((b) => NORM(b.textContent) === NORM(r[0]));   /* en-es options are Spanish */
+      click(o[Math.max(0, i)]);
+      await wait(120);
+      key(' ');
+      await wait(60);
+      continue;
+    }
+    const flip = doc.querySelector('#flip');
+    if (!flip.classList.contains('flipped')) { key(' '); await wait(30); }
+    key('3');
+    await wait(40);
+  }
+  ok(!doc.querySelector('#scr-done').hidden, 'en-es session completes');
+
+  /* the deliberately missed word is the only entry in words-to-watch … */
+  ok(!doc.querySelector('#recapBox').hidden, 'failed pretest lands in words-to-watch');
+  ok($$('#recapList .recap-item').length === 1, 'exactly one watched word after a single failed pretest');
+  ok(normWord({ textContent: doc.querySelector('#recapList .recap-es').textContent }) === normWord({ textContent: missRow[0] }),
+    'watched word is the missed Spanish word');
+
+  /* … and practicing it returns a REGULAR flashcard: question side up first,
+     grade buttons on the real answer face (Spanish back for en-es) */
+  click(doc.querySelector('#recapPractice'));
+  await wait(40);
+  ok(doc.querySelector('#pretestPanel').hidden && !doc.querySelector('#flip').hidden,
+    'practiced word comes back as a regular flashcard, not a second pretest');
+  ok(!doc.querySelector('#flip').classList.contains('flipped'), 'regular flashcard opens question-side-up');
+  ok(normWord(doc.querySelector('#frontWord')) === NORM(missRow[1]), 'en-es front face shows the English question');
+  key(' ');
+  await wait(60);
+  ok(doc.querySelector('#flip').classList.contains('flipped'), 'Space flips to the answer side');
+  ok(normWord(doc.querySelector('#backWord')) === normWord({ textContent: missRow[0] }),
+    'grade buttons sit on the REAL answer face: Spanish back for en-es');
+  ok(key('j') === false, 'j (German home row) grades "again"');
+  await wait(80);
+  ok(doc.querySelector('#scr-done').hidden, '"again" requeues the failed card within the session');
+  ok(!doc.querySelector('#flip').classList.contains('flipped'), 'requeued card returns question-side-up');
+  key(' ');
+  await wait(40);
+  ok(doc.querySelector('#flip').classList.contains('flipped'), 'requeued card flips to the answer side');
+  ok(key('l') === false, 'l grades the requeued card "good"');
+  await wait(60);
+  ok(!doc.querySelector('#scr-done').hidden, 'practice round completes after the requeue');
+
+  /* restore ES→EN for the following sections */
+  click(doc.querySelector('#homeBtn'));
+  await wait(30);
+  click(doc.querySelector('#dirSeg button[data-dir="es-en"]'));
+  await wait(30);
+
   const chalRows = $$('#chalList .chal-tile');
   ok(chalRows.length === allClusters, 'done-screen cluster list also shows all ' + allClusters + ' clusters');
 
@@ -287,7 +449,15 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
     const q1answer = answerFor(row1, true);
     const wrongIdx = $$('#chOpts button').findIndex((b) => NORM(b.textContent) !== NORM(q1answer));
     click($$('#chOpts button')[wrongIdx]);
-    await wait(700);
+    /* regression: while TTS is talking, the next question must wait — set the
+       flag immediately (the app's own minimum dwell is only 620 ms) */
+    window.speechSynthesis.speaking = true;
+    const cntBusy = doc.querySelector('#chCount').textContent;
+    await wait(900);
+    ok(doc.querySelector('#chCount').textContent === cntBusy, 'MC challenge holds the resolution while speech plays');
+    window.speechSynthesis.speaking = false;
+    await wait(300);
+    ok(doc.querySelector('#chCount').textContent !== cntBusy, 'challenge advances once speech finished');
     /* the rest: answer correctly */
     let guard2 = 0;
     while (doc.querySelector('#scr-chaldone').hidden && guard2++ < 60) {
@@ -327,8 +497,7 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
       'challenge input stays visible, turned red');
     ok(!doc.querySelector('#chTypeVerdict').hidden && doc.querySelector('#chTypeVerdict').classList.contains('bad') &&
        doc.querySelector('#chTypeVerdict').textContent.includes('✗'), 'challenge shows the ✗ verdict');
-    ok(doc.querySelector('#chWord').hidden && doc.querySelector('#chTypeActions').hidden,
-      'typed challenge reveal clears the question and buttons');
+    ok(doc.querySelector('#chWord').hidden, 'typed challenge reveal clears the question word');
     ok(!doc.querySelector('#chTypeNext').hidden, 'challenge Continue button shown');
     const beforeCount = doc.querySelector('#chCount').textContent;
     await wait(900);
@@ -341,7 +510,9 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
   /* peek: resolution shown (neutral), waits for input too */
   {
     const row = findRow(doc.querySelector('#chWord').textContent);
-    click(doc.querySelector('#chTypePeek'));
+    const chInp = doc.querySelector('#chTypeInput');
+    chInp.value = '';                                     /* empty Enter = show answer */
+    chInp.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
     await wait(350);
     ok(!doc.querySelector('#chTypeFb').hidden && !doc.querySelector('#chTypeFb').classList.contains('fb-ok') &&
        !doc.querySelector('#chTypeFb').classList.contains('fb-bad'), 'peek shows a neutral reveal');
@@ -349,6 +520,7 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
     doc.querySelector('#chTypeFbA').textContent.trim() === row[1], 'peek reveals question = answer');
     ok(doc.querySelector('#chTypeVerdict').hidden, 'peek shows no ✓/✗ verdict');
     ok(doc.querySelector('#chTypeInput').hidden, 'peek hides the idle input — no dead field above the reveal');
+    ok(chInp.disabled, 'peeked input is locked too');
     const beforeCount = doc.querySelector('#chCount').textContent;
     await wait(900);
     ok(doc.querySelector('#chCount').textContent === beforeCount, 'peeked resolution also waits for input');
@@ -398,19 +570,20 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
       const row = findRow(doc.querySelector('#typeWord').textContent);
       if (row) {
         doc.querySelector('#typeInput').value = answerFor(row, true);
-        click(doc.querySelector('#typeCheck'));
+        doc.querySelector('#typeInput').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
         await wait(400);                             /* green reveal holds… Space advances */
         key(' ');
         await wait(350);
       } else { key(' '); await wait(400); }
     } else if (!doc.querySelector('#pretestPanel').hidden) {
       sawFlip = true; mixes++;              /* a pretest only appears in flashcard rounds */
-      click($$('#preOpts button')[0]);
-      await wait(1400);
-      if (!doc.querySelector('#flip').hidden && doc.querySelector('#flip').classList.contains('flipped')) {
-        click(doc.querySelector('#grades .g-good'));
-        await wait(30);
-      }
+      const prow = findRow(doc.querySelector('#preWord').textContent);
+      const popts = $$('#preOpts button');
+      const pidx = popts.findIndex((b) => NORM(b.textContent) === NORM(answerFor(prow, true)));
+      click(popts[Math.max(0, pidx)]);
+      await wait(150);
+      key(' ');                                   /* self-grading advance, no rating card */
+      await wait(100);
     } else if (!doc.querySelector('#flip').hidden) {
       sawFlip = true; mixes++;
       if (!doc.querySelector('#flip').classList.contains('flipped')) {
