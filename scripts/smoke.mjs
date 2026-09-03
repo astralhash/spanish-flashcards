@@ -155,5 +155,15 @@ ok(!Core.answerMatches('salir', 'ir'), 'rejects substring traps');
 ok(!Core.answerMatches('la mesa', ''), 'rejects empty guess');
 ok(Core.normalizeAnswer('¡MÁÑANA!') === 'manana', 'normalizeAnswer strips accents + punctuation');
 
+/* multi-synonym answers ("beanie, winter hat"): any one right synonym counts */
+ok(Core.answerMatches('beanie, winter hat', 'beanie'), 'matches a single synonym');
+ok(Core.answerMatches('beanie, winter hat', 'winter hat'), 'matches the other synonym');
+ok(Core.answerMatches('beanie, winter hat', 'winter hat, beanie'), 'matches a reordered synonym list on the guess side');
+ok(Core.answerMatches('beanie, winter hat', 'beanie, winter hat'), 'full synonym list still matches');
+ok(!Core.answerMatches('beanie, winter hat', 'cap'), 'rejects a word absent from the synonym list');
+ok(!Core.answerMatches('beanie, winter hat', 'winter'), 'rejects a truncated synonym');
+ok(Core.answerMatches('to be (location, state)', 'to be (location, state)'), 'parenthesized gloss matches itself');
+ok(!Core.answerMatches('to be (location, state)', 'state'), 'a comma inside parentheses does not split synonyms');
+
 if (fails) { console.error('\n' + fails + ' FAILURE(S)'); process.exit(1); }
 console.log('\nSMOKE OK — core logic verified');

@@ -51,6 +51,21 @@ function findRow(text) {
   return null;
 }
 const answerFor = (row, isEsFront) => isEsFront ? row[1] : row[0];
+/* resolve the row behind a pretest question by matching its rendered options —
+   robust against homonyms ("sonar"/"soñar" collide accent-stripped, and EN
+   glosses repeat across rows, which makes findRow ambiguous) */
+const pretestRow = (text, isEsFront) => {
+  const opts = $$('#preOpts button').map((b) => NORM(b.textContent));
+  return VOCAB.find((r) => (isEsFront ? normWord({ textContent: r[0] }) === normWord({ textContent: text })
+                                      : NORM(r[1]) === NORM(text)) &&
+                         opts.indexOf(NORM(isEsFront ? r[1] : r[0])) !== -1) || findRow(text);
+};
+/* the row actually behind a typed round: same ES (accent-insensitively) AND the
+   EN the page just revealed — findRow alone can pick an accent-homonym
+   ("sonar" vs "soñar" normalize identically) */
+const trueRow = (esText, shownEn) =>
+  VOCAB.find((r) => normWord({ textContent: r[0] }) === normWord({ textContent: esText }) &&
+                    NORM(r[1]) === NORM(shownEn)) || findRow(esText);
 
 await wait(250);
 
@@ -86,8 +101,9 @@ ok(total === 20, 'session has 20 cards: ' + total);
 
 /* wrong answer via the ENTER key (the real keyboard path) → red reveal + the correct
    solution, and it STAYS — the Enter keydown must not double-fire into an instant advance */
+const typedMissRows = [];
 {
-  const row = findRow(doc.querySelector('#typeWord').textContent);
+  let row = findRow(doc.querySelector('#typeWord').textContent);
   ok(!!row, 'can resolve the typed question word to a vocab row');
   const input = doc.querySelector('#typeInput');
   input.value = 'zzz-not-the-answer';
@@ -95,6 +111,8 @@ ok(total === 20, 'session has 20 cards: ' + total);
   await wait(350);
   ok(!doc.querySelector('#typeFb').hidden && doc.querySelector('#typeFb').classList.contains('fb-bad'),
     'wrong typed answer (via Enter) shows the red reveal block');
+  row = trueRow(row[0], doc.querySelector('#typeFbA').textContent);
+  typedMissRows.push(row);
   ok(doc.querySelector('#typeFbQ').textContent.replace(/🔊/g, '').trim() === row[0],
     'reveal row shows the question word');
   ok(doc.querySelector('#typeFbA').textContent.trim() === row[1], 'reveal row shows the correct answer');
@@ -115,12 +133,19 @@ ok(total === 20, 'session has 20 cards: ' + total);
 
 /* correct answer via Enter → green reveal + green input → held until Space/Enter/click */
 {
-  const row = findRow(doc.querySelector('#typeWord').textContent);
+  let row = findRow(doc.querySelector('#typeWord').textContent);
   ok(!!row, 'second question resolvable');
   const input = doc.querySelector('#typeInput');
   input.value = answerFor(row, true);                /* dir is es-en */
   input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
   await wait(350);
+  if (doc.querySelector('#typeFb').classList.contains('fb-bad')) {
+    /* findRow picked an accent-homonym (sonar/soñar) → the "wrong" reveal is
+       the matcher being right about the real word: overrule and move on */
+    click(doc.querySelector('#typeVeto'));
+    await wait(80);
+  }
+  row = trueRow(row[0], doc.querySelector('#typeFbA').textContent);
   ok(!doc.querySelector('#typeFb').hidden && doc.querySelector('#typeFb').classList.contains('fb-ok'),
     'correct typed answer shows the green reveal block');
   ok(doc.querySelector('#typeFbQ').textContent.replace(/🔊/g, '').trim() === row[0], 'green reveal shows the question word');
@@ -137,9 +162,45 @@ ok(total === 20, 'session has 20 cards: ' + total);
   ok(doc.querySelector('#qcount').textContent.split('/')[0].trim() === '3', 'Space advances after a correct answer');
 }
 
+/* ✋ veto: a wrongly marked typed answer can be overruled — graded good and
+   remembered locally as a correct alternative for that word */
+let vetoedEs = null;
+{
+  let row = findRow(doc.querySelector('#typeWord').textContent);
+  ok(!!row, 'fourth question resolvable (veto round)');
+  const input = doc.querySelector('#typeInput');
+  ok(doc.querySelector('#typeVeto').hidden, 'no veto button on a fresh card');
+  input.value = 'zz-novelt-guess';                   /* definitely wrong */
+  input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await wait(350);
+  row = trueRow(row[0], doc.querySelector('#typeFbA').textContent);
+  vetoedEs = row[0];
+  ok(!doc.querySelector('#typeVeto').hidden, 'wrong mark offers the ✋ veto button');
+  const totalBefore = doc.querySelector('#qcount').textContent.split('/')[1].trim();
+  click(doc.querySelector('#typeVeto'));
+  await wait(80);
+  ok(doc.querySelector('#typeVeto').hidden, 'veto button hides after overruling');
+  ok(doc.querySelector('#typeVerdict').classList.contains('ok') &&
+     doc.querySelector('#typeVerdict').textContent.includes('✓'), 'overruled verdict flips to accepted');
+  ok(doc.querySelector('#typeInput').classList.contains('ok'), 'overruled input turns green');
+  const alts = JSON.parse(window.localStorage.getItem('vocabes.v1.alt') || '{}');
+  ok(Array.isArray(alts[NORM(row[1])]) && alts[NORM(row[1])].indexOf(NORM('zz-novelt-guess')) !== -1,
+    'overruled guess stored as a correct alternative (localStorage vocabes.v1.alt)');
+  key(' ');
+  await wait(80);
+  ok(doc.querySelector('#qcount').textContent.split('/')[1].trim() === totalBefore,
+    'overruled answer grades good — no requeue (total unchanged)');
+}
+
+/* synonym glosses ("beanie, winter hat"): any ONE synonym counts as correct */
+ok(window.eval('Core.answerMatches("beanie, winter hat", "beanie")') === true,
+  'built page accepts a single synonym (beanie, winter hat → beanie)');
+ok(window.eval('Core.answerMatches("beanie, winter hat", "winter hat")') === true,
+  'built page accepts the other synonym too');
+
 /* empty field + Enter = "don't know": neutral reveal (no verdict), held like every outcome */
 {
-  const row = findRow(doc.querySelector('#typeWord').textContent);
+  let row = findRow(doc.querySelector('#typeWord').textContent);
   ok(!!row, 'third question resolvable');
   const input = doc.querySelector('#typeInput');
   input.value = '';
@@ -148,6 +209,8 @@ ok(total === 20, 'session has 20 cards: ' + total);
   ok(!doc.querySelector('#typeFb').hidden && !doc.querySelector('#typeFb').classList.contains('fb-ok') &&
      !doc.querySelector('#typeFb').classList.contains('fb-bad'), 'empty Enter reveals neutrally (no red/green wash class)');
   ok(doc.querySelector('#typeVerdict').hidden, 'empty Enter shows no \u2713/\u2717 verdict');
+  row = trueRow(row[0], doc.querySelector('#typeFbA').textContent);
+  typedMissRows.push(row);
   ok(doc.querySelector('#typeFbA').textContent.trim() === row[1], 'empty Enter reveals the correct answer');
   ok(!doc.querySelector('#typeNext').hidden, 'Continue shown after an empty reveal');
   ok(doc.querySelector('#typeInput').hidden, 'revealed-without-answer round hides the idle input');
@@ -161,6 +224,8 @@ await wait(40);
 ok(!doc.querySelector('#scr-done').hidden, 'done screen visible after ending the session');
 ok(!doc.querySelector('#recapBox').hidden, 'words-to-watch recap shown');
 ok(doc.querySelector('#recapList .recap-item') != null, 'recap lists the missed word');
+ok($$('#recapList .recap-item').every((r) => !r.textContent.includes(vetoedEs)),
+  'overruled (vetoed) word is NOT in words-to-watch');
 ok(!doc.querySelector('#doneTip').hidden, 'evening-review tip shown after the session');
 click(doc.querySelector('#recapPractice'));
 await wait(40);
@@ -171,7 +236,8 @@ ok(doc.querySelector('#qcount').textContent.split('/')[1].trim() === String(miss
 /* answer it correctly (green reveal holds → Space advances) until done */
 let guard = 0;
 while (doc.querySelector('#scr-done').hidden && guard++ < 8) {
-  const row = findRow(doc.querySelector('#typeWord').textContent);
+  const q = doc.querySelector('#typeWord').textContent;
+  const row = typedMissRows.find((r) => normWord({ textContent: r[0] }) === normWord({ textContent: q })) || findRow(q);
   doc.querySelector('#typeInput').value = answerFor(row, true);
   doc.querySelector('#typeInput').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
   await wait(400);
@@ -208,7 +274,7 @@ await wait(60);
 ok(!doc.querySelector('#pretestPanel').hidden, 'new card shows the 4-option pretest');
 ok($$('#preOpts button').length === 4, 'pretest has 4 options');
 {
-  const row = findRow(doc.querySelector('#preWord').textContent);
+  const row = pretestRow(doc.querySelector('#preWord').textContent, true);
   ok(!!row, 'pretest question resolvable');
   const correct = $$('#preOpts button').find((b) => NORM(b.textContent) === NORM(answerFor(row, true)));
   ok(!!correct, 'pretest answer option found');
@@ -229,7 +295,7 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
 
 /* keyboard: digits answer the pretest; a correct pick self-grades and moves on */
 {
-  const krow = findRow(doc.querySelector('#preWord').textContent);
+  const krow = pretestRow(doc.querySelector('#preWord').textContent, true);
   const kopts = $$('#preOpts button');
   const kidx = kopts.findIndex((b) => NORM(b.textContent) === NORM(answerFor(krow, true)));
   key(String(kidx + 1));                             /* keyboard picks the option */
@@ -250,7 +316,7 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
       const pre = doc.querySelector('#pretestPanel');
       if (!pre.hidden) {
         /* self-grading: pick the correct option so the session stays recap-clean */
-        const prow = findRow(doc.querySelector('#preWord').textContent);
+        const prow = pretestRow(doc.querySelector('#preWord').textContent, true);
         const popts = $$('#preOpts button');
         const pidx = popts.findIndex((b) => NORM(b.textContent) === NORM(answerFor(prow, true)));
         click(popts[Math.max(0, pidx)]);
@@ -355,7 +421,9 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
   let missRow = null;
   {
     ok(!doc.querySelector('#pretestPanel').hidden, 'en-es: brand-new card opens with the pretest');
-    missRow = findRow(doc.querySelector('#preWord').textContent);
+    /* resolve the real row via its Spanish option — findRow alone is ambiguous
+       when several rows share the same English gloss */
+    missRow = pretestRow(doc.querySelector('#preWord').textContent, false);
     ok(!!missRow, 'en-es pretest resolvable');
     ok(normWord(doc.querySelector('#preWord')) === NORM(missRow[1]), 'en-es prompt is the ENGLISH word');
     const popts = $$('#preOpts button');
@@ -375,9 +443,10 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
   let guardE = 0;
   while (doc.querySelector('#scr-done').hidden && guardE++ < 90) {
     if (!doc.querySelector('#pretestPanel').hidden) {
-      const r = findRow(doc.querySelector('#preWord').textContent);
       const o = $$('#preOpts button');
-      const i = o.findIndex((b) => NORM(b.textContent) === NORM(r[0]));   /* en-es options are Spanish */
+      const tr = pretestRow(doc.querySelector('#preWord').textContent, false);
+      const i = o.findIndex((b) => NORM(b.textContent) === NORM(tr[0]));
+      if (i < 0) console.error('DBG no valid option for', doc.querySelector('#preWord').textContent);
       click(o[Math.max(0, i)]);
       await wait(120);
       key(' ');
@@ -497,6 +566,14 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
       'challenge input stays visible, turned red');
     ok(!doc.querySelector('#chTypeVerdict').hidden && doc.querySelector('#chTypeVerdict').classList.contains('bad') &&
        doc.querySelector('#chTypeVerdict').textContent.includes('✗'), 'challenge shows the ✗ verdict');
+    ok(!doc.querySelector('#chTypeVeto').hidden, 'challenge miss offers the ✋ veto button too');
+    click(doc.querySelector('#chTypeVeto'));
+    await wait(80);
+    ok(doc.querySelector('#chTypeVeto').hidden && doc.querySelector('#chTypeVerdict').classList.contains('ok') &&
+       doc.querySelector('#chTypeVerdict').textContent.includes('✓') && doc.querySelector('#chTypeInput').classList.contains('ok'),
+      'challenge veto flips the verdict to accepted (input green)');
+    ok(!doc.querySelector('#chTypeFb').classList.contains('fb-bad') && doc.querySelector('#chTypeFb').classList.contains('fb-ok'),
+      'challenge veto turns the reveal green');
     ok(doc.querySelector('#chWord').hidden, 'typed challenge reveal clears the question word');
     ok(!doc.querySelector('#chTypeNext').hidden, 'challenge Continue button shown');
     const beforeCount = doc.querySelector('#chCount').textContent;

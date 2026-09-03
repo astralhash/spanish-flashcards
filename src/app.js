@@ -49,6 +49,28 @@
     saveTimer = setTimeout(function () { try { localStorage.setItem(LS_KEY + '.state', JSON.stringify(state)); } catch (e) {} }, 220);
   }
 
+  /* ---- vetted answer alternatives ---- */
+  /* When the learner overrules a marked-wrong typed answer ("✋ my answer was
+     right"), the guess is remembered locally as a correct alternative for that
+     target word and accepted by typedMatch from then on. Keyed by the
+     normalized target, so both directions and challenges benefit. */
+  var alts = loadAlts();
+  function loadAlts() {
+    try { var a = JSON.parse(localStorage.getItem(LS_KEY + '.alt') || '{}'); return a && typeof a === 'object' ? a : {}; } catch (e) { return {}; }
+  }
+  function saveAlts() { try { localStorage.setItem(LS_KEY + '.alt', JSON.stringify(alts)); } catch (e) {} }
+  function addAlt(target, guess) {
+    var k = C.normalizeAnswer(target);
+    var g = C.normalizeAnswer(guess);
+    if (!k || !g) return;
+    if (!alts[k]) alts[k] = [];
+    if (alts[k].indexOf(g) === -1) { alts[k].push(g); saveAlts(); }
+  }
+  function altMatch(target, guess) {
+    var list = alts[C.normalizeAnswer(target)];
+    return !!list && list.indexOf(C.normalizeAnswer(guess)) !== -1;
+  }
+
   /* ---------------- helpers ---------------- */
   function entryById(id) {
     var all = entries();
@@ -361,6 +383,7 @@
 
   /* ---- typed-answer matching ---- */
   function typedMatch(target, guess) {
+    if (altMatch(target, guess)) return true;   /* learner-vetted alternative */
     if (C.answerMatches(target, guess)) return true;
     /* verb tolerance: accept a conjugated form of the target infinitive */
     if (!CJ) return false;
@@ -437,7 +460,7 @@
                  : settings.dir === 'en-es' ? 'English → Spanish' : 'mixed directions';
     var how;
     if (settings.ans === 'type') {
-      how = ['✏️ Typed', 'type the translation · <kbd>Enter</kbd> checks · empty <kbd>Enter</kbd> shows the answer'];
+      how = ['✏️ Typed', 'type the translation · <kbd>Enter</kbd> checks · empty <kbd>Enter</kbd> shows the answer · wrongly marked? <kbd>V</kbd> overrules and remembers your answer'];
     } else if (settings.ans === 'flip') {
       how = ['🃏 Flashcards', 'click or press <kbd>Space</kbd> to reveal · <kbd>1</kbd>–<kbd>4</kbd> grades'];
     } else {
@@ -501,7 +524,11 @@
 
   function setQuizVisibility(which) {        /* 'pre' | 'flip' | 'type' */
     $('#pretestPanel').hidden = which !== 'pre';
-    $('#flip').hidden = which !== 'flip';
+    var flip = $('#flip');
+    flip.hidden = which !== 'flip';
+    /* pretest/typed panels replace the card: clear a stale answer-side state so
+       the hidden card can never resurface flipped */
+    if (which !== 'flip') flip.classList.remove('flipped');
     $('#typePanel').hidden = which !== 'type';
   }
 
@@ -645,6 +672,7 @@
     $('#typeFb').hidden = true;
     $('#typeVerdict').hidden = true;
     $('#typeNext').hidden = true;
+    $('#typeVeto').hidden = true;
     sess.typed = 'idle';
     setTypeMode(true);
     setQuizVisibility('type');
@@ -689,6 +717,7 @@
     if (!node) return;
     node.classList.remove('ok', 'bad');
     if (state === 'ok') { node.textContent = '✓ Correct!'; node.classList.add('ok'); node.hidden = false; }
+    else if (state === 'veto') { node.textContent = '✓ Accepted — remembered as an alternative'; node.classList.add('ok'); node.hidden = false; }
     else if (state === 'miss') { node.textContent = '✗ Not quite'; node.classList.add('bad'); node.hidden = false; }
     else node.hidden = true;                 /* peek stays neutral */
   }
@@ -735,9 +764,31 @@
     inp.classList.add(ok ? 'ok' : 'bad');     /* instant: the typed word turns green/red */
     revealType(e, dir, ok ? 'ok' : 'miss');
     inp.hidden = false;                       /* the colored answer stays above the reveal */
+    /* wrong according to the app, but the learner may overrule (✋ / V) */
+    $('#typeVeto').hidden = ok;
     /* correct, wrong or peeked: the correct answer stays on screen until
        the learner advances (click, Space or Enter) */
     awaitType();
+  }
+
+  /* the learner overrules a marked-wrong typed answer: accept it now and
+     remember it locally as a correct alternative for this word */
+  function vetoType() {
+    if (!sess || sess.typed !== 'miss') return;
+    var e = entryById(sess.ids[sess.i]);
+    addAlt(typeTarget(e, sess.curDir), $('#typeInput').value);
+    sess.typed = 'ok';                        /* advancing will grade this as 'good' */
+    var inp = $('#typeInput');
+    inp.classList.remove('bad');
+    inp.classList.add('ok');
+    $('#typeVeto').hidden = true;
+    var fb = $('#typeFb');
+    fb.classList.remove('fb-bad');
+    fb.classList.add('fb-ok');
+    flashFb(fb, 'ok');
+    flashPanel($('#typePanel'), 'ok');
+    setVerdict($('#typeVerdict'), 'veto');
+    sndGood();
   }
 
   function peekType() {
@@ -745,6 +796,7 @@
     var e = entryById(sess.ids[sess.i]);
     sess.typed = 'peek';
     $('#typeInput').disabled = true;
+    $('#typeVeto').hidden = true;
     revealType(e, sess.curDir, 'peek');
     awaitType();
   }
@@ -908,6 +960,7 @@
       inp.value = ''; inp.disabled = false;
       inp.classList.remove('ok', 'bad');
       $('#chTypeNext').hidden = true;
+      $('#chTypeVeto').hidden = true;
       fb.hidden = true;
       fb.classList.remove('fb-ok', 'fb-bad');
       $('#chTypeVerdict').hidden = true;
@@ -1008,10 +1061,39 @@
     }
     revealChal(q, ok ? 'ok' : 'miss');
     inp.hidden = false;                 /* the colored answer stays above the reveal */
+    /* wrong according to the app, but the learner may overrule (✋ / V) */
+    $('#chTypeVeto').hidden = ok;
     /* correct, wrong or peeked: the correct answer stays on screen until
        the learner advances (click, Space or Enter) */
     challenge.waiting = true;
     $('#chTypeNext').hidden = false;
+  }
+
+  /* the learner overrules a marked-wrong typed challenge answer: accept it and
+     remember it locally as a correct alternative for this word */
+  function vetoChal() {
+    if (!challenge || !challenge.waiting || $('#chTypeVeto').hidden) return;
+    var q = challenge.qs[challenge.i];
+    addAlt(q.d === 'es-en' ? q.en : q.es, $('#chTypeInput').value);
+    /* undo the miss bookkeeping: no replay round, no recap row */
+    var mi = challenge.missed.lastIndexOf(q);
+    if (mi !== -1) challenge.missed.splice(mi, 1);
+    for (var i = 0; i < challenge.allMissed.length; i++) {
+      if (challenge.allMissed[i].id === q.id) { challenge.allMissed.splice(i, 1); break; }
+    }
+    challenge.correct++; challenge.streak++;
+    challenge.best = Math.max(challenge.best, challenge.streak);
+    var inp = $('#chTypeInput');
+    inp.classList.remove('bad');
+    inp.classList.add('ok');
+    $('#chTypeVeto').hidden = true;
+    var fb = $('#chTypeFb');
+    fb.classList.remove('fb-bad');
+    fb.classList.add('fb-ok');
+    flashFb(fb, 'ok');
+    flashPanel($('#chTypeWrap'), 'ok');
+    setVerdict($('#chTypeVerdict'), 'veto');
+    sndGood();
   }
 
   function chPeekType() {
@@ -1024,6 +1106,7 @@
     pushMissed(q);
     revealChal(q, 'peek');
     $('#chTypeInput').disabled = true;
+    $('#chTypeVeto').hidden = true;
     challenge.waiting = true;
     $('#chTypeNext').hidden = false;
   }
@@ -1213,6 +1296,8 @@
     $('#homeBtn').addEventListener('click', function () { show('scr-start'); renderStart(); refreshPills(); });
     $('#recapPractice').addEventListener('click', practiceMissed);
     $('#typeNext').addEventListener('click', continueTyped);
+    $('#typeVeto').addEventListener('click', function () { this.blur(); vetoType(); });
+    $('#chTypeVeto').addEventListener('click', function () { this.blur(); vetoChal(); });
     /* answered pretest: a click anywhere on the panel (except the option
        buttons themselves — their click is the ANSWER and must not bubble
        straight into "advance") moves on to the rating card */
@@ -1430,8 +1515,10 @@
              .say-btn is exempt: after clicking 🔊, Space still advances. */
           var inTypeCtrl = ev.target && ev.target.closest && ev.target.closest('#typePanel button:not(.say-btn), #typePanel input');
           if (sess && sess.typed !== 'idle') {
-            /* resolution on screen (correct or not): Space/Enter advances */
+            /* resolution on screen (correct or not): Space/Enter advances,
+               V overrules a wrongly marked answer */
             if (!inTypeCtrl && (ev.key === ' ' || ev.key === 'Enter')) { ev.preventDefault(); continueTyped(); }
+            else if (!inTypeCtrl && (ev.key === 'v' || ev.key === 'V')) { ev.preventDefault(); vetoType(); }
             else if (ev.key === 'Escape') { ev.preventDefault(); if (sess) endSession(); }
           } else if (ev.key === 'Enter' && !inTypeCtrl && !$('#typeInput').disabled) { ev.preventDefault(); checkType(); }
           else if (ev.key === 'Escape') { ev.preventDefault(); if (sess) endSession(); }
@@ -1451,8 +1538,9 @@
         var cq = challenge ? challenge.qs[challenge.i] : null;
         var inChCtrl = ev.target && ev.target.closest && ev.target.closest('#chTypeWrap button:not(.say-btn), #chTypeWrap input');
         if (challenge && challenge.waiting) {
-          /* typed resolution on screen: Space/Enter advances */
+          /* typed resolution on screen: Space/Enter advances, V overrules */
           if (!inChCtrl && (ev.key === ' ' || ev.key === 'Enter')) { ev.preventDefault(); continueChalTyped(); }
+          else if (!inChCtrl && (ev.key === 'v' || ev.key === 'V')) { ev.preventDefault(); vetoChal(); }
           else if (ev.key === 'Escape') { $('#chQuit').click(); }
         }
         else if (cq && !cq.typed) {

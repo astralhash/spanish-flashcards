@@ -491,6 +491,20 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
 .type-fb.fb-bad .reveal-a { color: var(--bad); }
 .reveal-a .say-btn { font-size: .75em; }
 .type-next { margin-top: 2px; }
+/* overrule a marked-wrong typed answer — accept it and remember the alternative */
+.veto-btn {
+  border: 1px dashed var(--line); background: transparent; color: var(--muted);
+  font: inherit; font-weight: 700; font-size: .88rem; cursor: pointer;
+  border-radius: 999px; padding: 8px 18px; margin-top: 2px;
+  transition: color .15s, border-color .15s, background .15s, transform .13s;
+  -webkit-tap-highlight-color: transparent;
+}
+.veto-btn:hover {
+  color: var(--ok); border-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 9%, transparent);
+  transform: translateY(-1px);
+}
+.veto-btn:active { transform: scale(.98); }
 
 /* quiet speaker icon — a thin monochrome glyph that tints on hover */
 .say-btn {

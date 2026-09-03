@@ -97,9 +97,19 @@ to hit round totals — exceeding targets is fine.
   continue button is labeled plain "Continue" but silently accepts Space,
   Enter and clicks anywhere on the panel.
 - **Typed matching**: `Core.answerMatches`/`Core.normalizeAnswer` are
-  accent-insensitive, punctuation-insensitive and article-tolerant; the UI
+  accent-insensitive, punctuation-insensitive and article-tolerant; a
+  comma-separated answer ("beanie, winter hat") is treated as a synonym list
+  and typing any ONE synonym counts as correct (commas inside parentheses
+  don't split — `to be (location, state)` stays one gloss). The UI
   (`typedMatch` in `src/app.js`) additionally accepts any conjugated form of
   a target infinitive via `Conj.table`.
+- **Veto ("✋ My answer was right", key `V`)**: after a typed answer is marked
+  wrong in a review or challenge round, the learner can overrule it — the
+  verdict flips to accepted, the round grades as 'good' (challenge miss
+  bookkeeping — replay queue + recap — is undone) and the guess is stored
+  locally (`localStorage` key `vocabes.v1.alt`, keyed by the normalized
+  target) as a correct alternative accepted by `typedMatch` from then on.
+  Only typed rounds offer the veto; peeks and MC picks don't.
 - **Reveals**: on check/peek the panel collapses to `question = answer` and
   *holds* — advancing requires clicking, Space or Enter (correct = graded
   'good', miss/peek = 'again'). Speech: audio plays on demand via 🔊

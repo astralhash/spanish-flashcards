@@ -287,7 +287,24 @@
   }
   var ES_ART = /^(el|la|los|las|lo|un|una|unos|unas|der|die|das)\s+/;
 
-  function answerMatches(target, guess) {
+  /* split a comma-separated answer into its synonyms; commas inside
+     parentheses count as part of one gloss, not a separator
+     ("to be (location, state)" stays one synonym) */
+  function splitSyns(s) {
+    var out = [], cur = '', depth = 0;
+    s = String(s == null ? '' : s);
+    for (var i = 0; i < s.length; i++) {
+      var ch = s.charAt(i);
+      if (ch === '(') depth++;
+      else if (ch === ')') depth = Math.max(0, depth - 1);
+      if (ch === ',' && !depth) { out.push(cur); cur = ''; }
+      else cur += ch;
+    }
+    out.push(cur);
+    return out;
+  }
+
+  function matchOne(target, guess) {
     var t = normalizeAnswer(target);
     var g = normalizeAnswer(guess);
     if (!g || g.length < 2) return false;
@@ -296,6 +313,19 @@
     var gs = g.replace(ES_ART, '');
     if (!ts.length || !gs.length) return false;
     return ts === g || t === gs || ts === gs;   /* accept/ignore a leading article on either side */
+  }
+
+  function answerMatches(target, guess) {
+    var ts = splitSyns(target);
+    var gs = splitSyns(guess);
+    if (ts.length === 1 && gs.length === 1) return matchOne(ts[0], gs[0]);
+    /* multi-synonym answers ("beanie, winter hat"): any one right synonym counts */
+    for (var i = 0; i < ts.length; i++) {
+      for (var j = 0; j < gs.length; j++) {
+        if (matchOne(ts[i], gs[j])) return true;
+      }
+    }
+    return false;
   }
 
   function countLevels(vocab) {
