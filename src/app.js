@@ -232,11 +232,15 @@
   /* ---- speech (text-to-speech) + production prompts ---- */
   /* The production effect: saying words aloud (or at least hearing them right
      after a recall attempt) strengthens memory for the spoken form.
-     Two engines, tried in order:
+     Two engines, selected in settings:
        1. HD neural voice (Piper WASM via src/tts.js) — opt-in, downloaded once.
-       2. System voices via Web Speech API — ranked best-first, because
-          getVoices() order is arbitrary and the first es* voice is often the
-          worst one installed (compact eSpeak-style voices etc.). */
+          When HD is chosen it is HD or silence: synthesis may be slow, still
+          loading, or superseded by fast card progression — we never degrade
+          to the low-quality system voice, we just stay quiet.
+       2. System voices via Web Speech API — used only when HD is off; ranked
+          best-first, because getVoices() order is arbitrary and the first
+          es* voice is often the worst one installed (compact eSpeak-style
+          voices etc.). */
   var esVoices = [];
   var esVoice = null;
   function scoreVoice(v) {
@@ -280,15 +284,13 @@
   function speak(text) {
     if (!settings.tts) return;
     text = String(text);
-    if (settings.hd && window.NeuralTTS) {
+    if (!settings.hd) { speakSystem(text); return; }
+    /* HD selected: HD or silence — no system-voice fallback, even when
+       synthesis fails or is superseded by fast card progression. */
+    if (window.NeuralTTS) {
       NeuralTTS.speak(text, { voice: settings.hdVoice, rate: settings.rate })
-        .catch(function () {
-          speakSystem(text);
-          toast('HD voice unavailable — used system voice');
-        });
-      return;
+        .catch(function () { /* stay silent; ⚠ status line in settings explains */ });
     }
-    speakSystem(text);
   }
   function speakSystem(text) {
     try {
@@ -1099,7 +1101,7 @@
     if (!settings.hd) { node.textContent = ''; return; }
     if (s.status === 'loading') node.textContent = '⏳ ' + s.detail;
     else if (s.status === 'ready') node.textContent = '✓ HD voice ready';
-    else if (s.status === 'error') node.textContent = '⚠ ' + s.detail + ' — will fall back to system voices';
+    else if (s.status === 'error') node.textContent = '⚠ ' + s.detail + ' — staying silent (system-voice fallback is off)';
     else node.textContent = '';
   }
   /* 🔊 next to the voice pickers: speaks a fixed sample with the *selected*
@@ -1109,7 +1111,7 @@
     var sample = 'Hola, así suena esta voz.';
     if ($('#setHd').checked && !$('#hdVoiceRow').hidden) {
       NeuralTTS.speak(sample, { voice: $('#setHdVoice').value, rate: settings.rate })
-        .catch(function () { toast('HD voice unavailable — used system voice'); speakSystem(sample); });
+        .catch(function () { /* stay silent; the ⚠ status line shows the reason */ });
       return;
     }
     var saved = settings.voiceURI;

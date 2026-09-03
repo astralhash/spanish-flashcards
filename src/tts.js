@@ -3,8 +3,9 @@
  * Uses @diffusionstudio/vits-web (Piper VITS models on ONNX Runtime WASM),
  * imported lazily from a CDN the first time an HD voice is actually needed.
  * The library streams the model (~60–120 MB) once and caches it in OPFS, so
- * later sessions are fully offline. Every failure path degrades quietly:
- * app.js falls back to ranked system (Web Speech) voices when this fails.
+ * later sessions are fully offline. Failure paths degrade to silence: when
+ * the HD voice is selected, app.js stays quiet rather than degrading to the
+ * lower-quality system (Web Speech) voices.
  *
  * Exposes window.NeuralTTS with:
  *   .voices                 { id -> label } of bundled Spanish Piper voices
@@ -115,7 +116,7 @@
         console.warn('[vocabes] neural TTS failed:', err);
         stop();
         setStatus('error', String((err && err.message) || err));
-        throw err;                             /* caller falls back to system voice */
+        throw err;                             /* callers stay silent on failure */
       });
     });
   }
