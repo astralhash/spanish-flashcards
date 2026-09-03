@@ -436,7 +436,6 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--bad) 30%, transparent);
   animation: shake .3s;
 }
-.type-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 .type-fb {
   display: flex; flex-direction: column; align-items: center; gap: 5px;
   border-radius: 16px; padding: 14px 22px 16px; max-width: 480px; width: 100%;
