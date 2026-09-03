@@ -2,7 +2,7 @@
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="color-scheme" content="light dark">
 <title>VocabES — European Spanish flashcards (B1–C2)</title>
 <style>
@@ -33,7 +33,7 @@
       <div class="lbl">Levels</div>
       <div class="chips" id="levelChips"></div>
 
-      <div class="row">
+      <div class="row seg-row">
         <span class="lbl">Answer style</span>
         <div class="seg" id="ansSeg">
           <button data-ans="type">✏️ Type it</button>
@@ -42,7 +42,7 @@
         </div>
       </div>
 
-      <div class="row">
+      <div class="row seg-row">
         <span class="lbl">Direction</span>
         <div class="seg" id="dirSeg">
           <button data-dir="es-en">ES → EN</button>
@@ -106,7 +106,7 @@
     <div id="typePanel" class="card type-panel" hidden>
       <div id="typeDir" class="sub small"></div>
       <div id="typeWord" class="word"></div>
-      <input id="typeInput" class="type-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="type your answer or press Enter to show the answer" enterkeyhint="done">
+      <input id="typeInput" class="type-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="type your answer · Enter = show" enterkeyhint="done">
       <div id="typeFb" class="type-fb" hidden>
         <div class="verdict" id="typeVerdict" hidden></div>
         <div class="reveal-row"><span id="typeFbQ" class="reveal-q"></span><span class="reveal-eq">=</span><span id="typeFbA" class="reveal-a"></span></div>
@@ -161,7 +161,7 @@
       <div id="chWord" class="word"></div>
       <div id="chOpts" class="opts"></div>
       <div id="chTypeWrap" class="type-panel slim" hidden>
-        <input id="chTypeInput" class="type-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="type your answer or press Enter to show the answer" enterkeyhint="done">
+        <input id="chTypeInput" class="type-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="your answer · Enter = show" enterkeyhint="done">
         <div id="chTypeFb" class="type-fb" hidden>
           <div class="verdict" id="chTypeVerdict" hidden></div>
           <div class="reveal-row"><span id="chTypeFbQ" class="reveal-q"></span><span class="reveal-eq">=</span><span id="chTypeFbA" class="reveal-a"></span></div>

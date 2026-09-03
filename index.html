@@ -2,7 +2,7 @@
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="color-scheme" content="light dark">
 <title>VocabES — European Spanish flashcards (B1–C2)</title>
 <style>
@@ -45,7 +45,10 @@ html[data-theme="dark"] {
 /* ============ base ============ */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 [hidden] { display: none !important; }   /* beat display rules on .screen/.modal-back */
-html { height: 100%; }
+html {
+  height: 100%;
+  -webkit-text-size-adjust: 100%; text-size-adjust: 100%;
+}
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   background: var(--bg);
@@ -336,7 +339,10 @@ kbd {
 }
 .modal-body { padding: 20px; display: flex; flex-direction: column; gap: 20px; text-align: left; }
 .field { display: flex; flex-direction: column; gap: 8px; font-weight: 700; font-size: .92rem; }
-.field.check { flex-direction: row; align-items: center; gap: 10px; }
+/* checkbox rows: hanging checkbox, text flows as one block (flex-row made
+   the label text + hint span squeeze into two narrow columns on phones) */
+.field.check { display: block; position: relative; padding-left: 34px; min-height: 24px; }
+.field.check input[type="checkbox"] { position: absolute; left: 0; top: 1px; width: 21px; height: 21px; margin: 0; accent-color: var(--accent); }
 .range-row { display: flex; align-items: center; gap: 12px; }
 .range-row input { flex: 1; accent-color: var(--accent); }
 .voice-box { gap: 12px; border: 1px solid var(--line); border-radius: 14px; padding: 14px; background: var(--surface2); }
@@ -365,10 +371,10 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .danger-btn:hover { filter: brightness(1.1); }
 .danger-btn:active { transform: scale(.97); }
 code { background: var(--surface2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: .82em; }
-
 /* ============ toast ============ */
 #toast {
-  position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+  position: fixed; left: 50%; bottom: calc(28px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
   background: var(--text); color: var(--bg); font-weight: 750; font-size: .88rem;
   padding: 11px 22px; border-radius: 999px; box-shadow: var(--shadow);
   z-index: 200; opacity: 0; pointer-events: none;
@@ -426,6 +432,9 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
   min-height: 0; padding: 18px; border-radius: 14px;
   background: var(--surface);                 /* solid so the whole-round color wash reads */
 }
+/* lives inside .chal-q (align-items:center) — without a width the input
+   shrink-wraps to its default size≈20 chars and clips the placeholder */
+.type-panel.slim, #chTypeWrap { width: 100%; }
 .pre-label { letter-spacing: .06em; }
 .type-input {
   width: 100%; max-width: 480px;
@@ -494,9 +503,9 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
   display: flex; align-items: baseline; justify-content: center;
   gap: 12px; flex-wrap: wrap; width: 100%;
 }
-.reveal-q { font-size: 1.35rem; font-weight: 700; color: var(--text); }
+.reveal-q { font-size: clamp(1.05rem, 4.5vw, 1.35rem); font-weight: 700; color: var(--text); overflow-wrap: anywhere; }
 .reveal-eq { font-size: 1.15rem; font-weight: 700; color: var(--muted); }
-.reveal-a { font-size: 2.05rem; font-weight: 800; letter-spacing: -.01em; color: var(--text); }
+.reveal-a { font-size: clamp(1.5rem, 6.5vw, 2.05rem); font-weight: 800; letter-spacing: -.01em; color: var(--text); overflow-wrap: anywhere; }
 .type-fb.fb-ok .reveal-a { color: var(--ok); }
 .type-fb.fb-bad .reveal-a { color: var(--bad); }
 .reveal-a .say-btn { font-size: .75em; }
@@ -555,6 +564,59 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ============ mobile ============
+   Test floor: 720p phones (720×1280 @2 → 360×640 CSS). Also verified:
+   1080×2340 @3 → 360×780 · 1080×2400 @2.625 → 411×915 · 1440×3120 @3.5 → 412×891. */
+@media (max-width: 480px) {
+  main { padding: 18px 14px calc(52px + env(safe-area-inset-bottom)); }
+  .card { padding: 22px 16px; gap: 14px; }
+  .top { padding: 10px 12px; }
+  .chal-list, .recap { padding: 16px; }
+  .modal-back { padding: 10px; }
+  .modal { max-height: calc(100dvh - 20px); border-radius: 18px; }
+  /* label above, full-width segmented control below */
+  .seg-row { flex-direction: column; align-items: stretch; gap: 8px; }
+  .seg { width: 100%; display: flex; }
+  .seg button { flex: 1 1 0; padding: 10px 6px; }
+}
+@media (max-width: 460px) {
+  .tag { display: none; }   /* "European Spanish" — already in the hero subtitle */
+}
+@media (max-width: 400px) {
+  .brand { font-size: .95rem; }
+  .top { gap: 6px; }
+  .top-right { gap: 6px; }
+  .pill { font-size: .68rem; padding: 4px 9px; }
+  .icon-btn { width: 34px; height: 34px; border-radius: 10px; }
+  .seg button { font-size: .8rem; }
+  .chal-grid { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); }
+  .chal-tile { padding: 10px 6px 8px; }
+}
+@media (max-width: 380px) {
+  .g { padding: 12px 6px; font-size: .9rem; }
+  .opts button { padding: 14px 8px; font-size: .95rem; }
+}
+
+/* touch devices: no physical keyboard → shortcut hints are noise;
+   16px form controls prevent iOS Safari's focus auto-zoom */
+@media (pointer: coarse) {
+  .g kbd { display: none; }
+  .g { font-size: 1rem; }
+  .field select, select, textarea { font-size: 16px; }
+}
+
+/* short landscape (720p phone rotated → 640×360 CSS): keep the card on screen */
+@media (max-height: 480px) and (orientation: landscape) {
+  main { padding: 12px 14px 18px; }
+  .screen { gap: 10px; }
+  .flipcard { height: clamp(220px, 58dvh, 320px); margin-top: 8px; }
+  .type-panel { min-height: clamp(220px, 58dvh, 320px); }
+  .face { padding: 32px 18px 14px; }
+  .face.back { padding-top: 42px; }
+  .g { padding: 10px 6px; }
+  .grades { margin-top: 6px; }
+}
 </style>
 </head>
 <body>
@@ -581,7 +643,7 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
       <div class="lbl">Levels</div>
       <div class="chips" id="levelChips"></div>
 
-      <div class="row">
+      <div class="row seg-row">
         <span class="lbl">Answer style</span>
         <div class="seg" id="ansSeg">
           <button data-ans="type">✏️ Type it</button>
@@ -590,7 +652,7 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
         </div>
       </div>
 
-      <div class="row">
+      <div class="row seg-row">
         <span class="lbl">Direction</span>
         <div class="seg" id="dirSeg">
           <button data-dir="es-en">ES → EN</button>
@@ -654,7 +716,7 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
     <div id="typePanel" class="card type-panel" hidden>
       <div id="typeDir" class="sub small"></div>
       <div id="typeWord" class="word"></div>
-      <input id="typeInput" class="type-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="type your answer or press Enter to show the answer" enterkeyhint="done">
+      <input id="typeInput" class="type-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="type your answer · Enter = show" enterkeyhint="done">
       <div id="typeFb" class="type-fb" hidden>
         <div class="verdict" id="typeVerdict" hidden></div>
         <div class="reveal-row"><span id="typeFbQ" class="reveal-q"></span><span class="reveal-eq">=</span><span id="typeFbA" class="reveal-a"></span></div>
@@ -709,7 +771,7 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
       <div id="chWord" class="word"></div>
       <div id="chOpts" class="opts"></div>
       <div id="chTypeWrap" class="type-panel slim" hidden>
-        <input id="chTypeInput" class="type-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="type your answer or press Enter to show the answer" enterkeyhint="done">
+        <input id="chTypeInput" class="type-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="your answer · Enter = show" enterkeyhint="done">
         <div id="chTypeFb" class="type-fb" hidden>
           <div class="verdict" id="chTypeVerdict" hidden></div>
           <div class="reveal-row"><span id="chTypeFbQ" class="reveal-q"></span><span class="reveal-eq">=</span><span id="chTypeFbA" class="reveal-a"></span></div>
