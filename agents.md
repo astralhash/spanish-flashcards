@@ -97,7 +97,9 @@ to hit round totals — exceeding targets is fine.
   continue button is labeled plain "Continue" but silently accepts Space,
   Enter and clicks anywhere on the panel.
 - **Typed matching**: `Core.answerMatches`/`Core.normalizeAnswer` are
-  accent-insensitive, punctuation-insensitive and article-tolerant; a
+  accent-insensitive, punctuation-insensitive and article-tolerant, and the
+  leading infinitive "to" is optional on English verb glosses ("work" matches
+  "to work" — the display keeps the formal "to work"); a
   comma-separated answer ("beanie, winter hat") is treated as a synonym list
   and typing any ONE synonym counts as correct (commas inside parentheses
   don't split — `to be (location, state)` stays one gloss). The UI

@@ -1139,6 +1139,13 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
       .trim();
   }
   var ES_ART = /^(el|la|los|las|lo|un|una|unos|unas|der|die|das)\s+/;
+  var EN_TO = /^to\s+/;
+
+  /* drop a leading infinitive "to" from an English gloss, never down to empty */
+  function stripTo(s) {
+    var r = s.replace(EN_TO, '');
+    return r.length ? r : s;
+  }
 
   /* split a comma-separated answer into its synonyms; commas inside
      parentheses count as part of one gloss, not a separator
@@ -1165,7 +1172,9 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
     var ts = t.replace(ES_ART, '');
     var gs = g.replace(ES_ART, '');
     if (!ts.length || !gs.length) return false;
-    return ts === g || t === gs || ts === gs;   /* accept/ignore a leading article on either side */
+    var tt = stripTo(ts), gt = stripTo(gs);
+    return ts === g || t === gs || ts === gs ||
+           tt === gs || ts === gt || tt === gt;   /* accept/ignore a leading article or infinitive "to" on either side */
   }
 
   function answerMatches(target, guess) {
