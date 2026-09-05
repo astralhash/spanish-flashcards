@@ -311,10 +311,7 @@
     return out;
   }
 
-  function matchOne(target, guess) {
-    var t = normalizeAnswer(target);
-    var g = normalizeAnswer(guess);
-    if (!g || g.length < 2) return false;
+  function baseMatch(t, g) {
     if (t === g) return true;
     var ts = t.replace(ES_ART, '');
     var gs = g.replace(ES_ART, '');
@@ -322,6 +319,84 @@
     var tt = stripTo(ts), gt = stripTo(gs);
     return ts === g || t === gs || ts === gs ||
            tt === gs || ts === gt || tt === gt;   /* accept/ignore a leading article or infinitive "to" on either side */
+  }
+
+  /* numbers: accept the word or the digits ("ten (10)" <-> "ten" / "10",
+     "diez" <-> "10"). Only parentheticals containing a digit are treated
+     as numeric alternatives — "to be (location, state)" keeps its parens. */
+  function stripNumParens(s) {
+    return String(s == null ? '' : s)
+      .replace(/\s*\([^()]*\d[^()]*\)/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+  function targetNums(s) {
+    var m = String(s == null ? '' : s).match(/\d+/g);
+    return m || [];
+  }
+  function normNum(s) {
+    return String(s).replace(/^0+(?=\d)/, '');
+  }
+  var ES_NUMS = {
+    cero: '0', uno: '1', un: '1', dos: '2', tres: '3', cuatro: '4',
+    cinco: '5', seis: '6', siete: '7', ocho: '8', nueve: '9', diez: '10',
+    once: '11', doce: '12', trece: '13', catorce: '14', quince: '15',
+    dieciseis: '16', diecisiete: '17', dieciocho: '18', diecinueve: '19',
+    veinte: '20', veintiuno: '21', veintiun: '21', veintidos: '22',
+    veintitres: '23', veinticuatro: '24', veinticinco: '25',
+    veintiseis: '26', veintisiete: '27', veintiocho: '28', veintinueve: '29',
+    treinta: '30', cuarenta: '40', cincuenta: '50', sesenta: '60',
+    setenta: '70', ochenta: '80', noventa: '90',
+    cien: '100', ciento: '100', mil: '1000'
+  };
+  var EN_NUMS = {
+    zero: '0', one: '1', two: '2', three: '3', four: '4', five: '5',
+    six: '6', seven: '7', eight: '8', nine: '9', ten: '10',
+    eleven: '11', twelve: '12', thirteen: '13', fourteen: '14', fifteen: '15',
+    sixteen: '16', seventeen: '17', eighteen: '18', nineteen: '19',
+    twenty: '20', thirty: '30', forty: '40', fifty: '50', sixty: '60',
+    seventy: '70', eighty: '80', ninety: '90',
+    'one hundred': '100', 'a hundred': '100', hundred: '100',
+    'one thousand': '1000', 'a thousand': '1000', thousand: '1000'
+  };
+  function numValue(s) {
+    var n = normalizeAnswer(s).replace(ES_ART, '');
+    n = stripTo(n);
+    if (!n) return null;
+    if (/^\d+$/.test(n)) return normNum(n);
+    if (ES_NUMS[n]) return ES_NUMS[n];
+    if (EN_NUMS[n]) return EN_NUMS[n];
+    return null;
+  }
+
+  function matchOne(target, guess) {
+    var t = normalizeAnswer(target);
+    var g = normalizeAnswer(guess);
+    if (!g) return false;
+    var gIsNum = /^\d+$/.test(g);
+    if (!gIsNum && g.length < 2) return false;
+    if (baseMatch(t, g)) return true;
+    /* numbers: a parenthesized digit is an alternative, not an extra word —
+       "ten (10)" is answered by "ten" or "10" */
+    var tw = normalizeAnswer(stripNumParens(target));
+    if (tw && tw !== t && baseMatch(tw, g)) return true;
+    if (/^\d+$/.test(t)) {
+      var gv = numValue(guess);
+      if (gv && gv === normNum(t)) return true;
+      return false;
+    }
+    if (gIsNum) {
+      var gn = normNum(g);
+      var nums = targetNums(target);
+      for (var i = 0; i < nums.length; i++) {
+        if (normNum(nums[i]) === gn) return true;
+      }
+      /* word -> digits even when the gloss carries no digits
+         ("diez" answered by "10", "ten" answered by "10") */
+      var tv = numValue(tw && tw !== t ? tw : target);
+      if (tv && tv === gn) return true;
+    }
+    return false;
   }
 
   function answerMatches(target, guess) {
