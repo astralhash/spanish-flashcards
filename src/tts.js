@@ -405,15 +405,7 @@
   ];
   var ST_TOTAL = ST_ASSETS.reduce(function (s, a) { return s + a[1]; }, 0);
   var ST_STEPS = 8;            /* denoise steps (official default; 5 low – 12 high) */
-  /* Warm parallelism: hard 1. onnxruntime-web runs with env.wasm.proxy = true,
-     and the proxy is a SINGLE worker shared by every session — so a second
-     "worker" never synthesized in parallel; it only doubled the model memory
-     inside the proxy (~2 × 380 MB, an OOM recipe) and multiplied failure
-     modes (its sessions were also fed the shared, transferred asset buffers —
-     see the note in session()). One worker, own compiled sessions, steady
-     count. Revisit only if ort ever gives per-session proxy workers. */
-  var WARM_PARALLEL = 1;
-  /* One-time asset download shared by every warm worker and by the interactive
+  /* One-time asset download shared by the warm worker and the interactive
      engine, so the ~380 MB is fetched (or read from OPFS) exactly once. */
   var _assetsP = null;
   function assets() {
@@ -842,10 +834,11 @@
      sessions (which onnxruntime-web doesn't guarantee to be safe). Reuses the
      shared asset download (assets()), the voice-style tensors
      (supersonic.style) and the shared ids/infer logic — call
-     `supersonic.infer.call(worker, ...)`. Only ONE worker is ever created
-     (WARM_PARALLEL is 1): ort's wasm proxy funnels every session through a
-     single shared proxy worker anyway, so extra workers would just double the
-     model memory inside it. The worker is cached across warm runs so a retry
+     `supersonic.infer.call(worker, ...)`. The warm is strictly SERIAL —
+     exactly one worker, one compiled session set: ort's wasm proxy funnels
+     every session through a single shared proxy worker, so more "workers"
+     never synthesized in parallel; they only doubled the model memory inside
+     it (an OOM recipe). The worker is cached across warm runs so a retry
      after a Stop doesn't re-pay the minutes-long compile. */
   var _warmWorker = null;
   function makeWarmWorker() {
@@ -1041,6 +1034,23 @@
       });
     }).catch(function () { return false; });
   }
+  /* Is this word already in the Supertonic word cache (memory or OPFS) for the
+     given voice/rate? Lets the app stay silent for uncached words while the
+     pre-heat batch owns the engine — synthesizing one mid-warm would contend
+     for the single ort proxy worker (or compile a second session set).
+     Best-effort: false for non-Supertonic voices and any lookup failure. */
+  function hasCachedWord(text, opts) {
+    opts = opts || {};
+    var meta = VOICES[opts.voice] || VOICES[DEFAULT_VOICE];
+    if (meta.engine !== 'supertonic') return Promise.resolve(false);
+    var rate = Math.max(0.7, Math.min(2, Number(opts.rate) || 1));
+    try {
+      var tPre = supersonic.prep(text);
+      var key = wordKey(meta.voice, tPre, rate);
+      if (wordMemGet(key)) return Promise.resolve(true);
+      return wordCacheGet(key).then(function (hit) { return !!hit; });
+    } catch (e) { return Promise.resolve(false); }
+  }
   var _actx = null;   /* shared AudioContext for background Opus encodes */
   function opusMime() {
     try {
@@ -1228,7 +1238,7 @@
   /* Pre-heat the Supertonic Opus word cache: synthesize every word and store the
      encoded audio so later repeats play instantly with no model load or
      inference. Words already cached are skipped (and count as done). One word
-     is synthesized at a time (see WARM_PARALLEL); each step is bounded by a
+     at a time, serially (see makeWarmWorker); each step is bounded by a
      watchdog so a wedged ort proxy worker can never freeze the batch forever
      (it used to stall at "N-1 remaining" when the proxy died mid-run), and a
      run of consecutive failures aborts the batch with a clear error instead of
@@ -1330,13 +1340,8 @@
       }
       return next();
     }
-    var n = Math.max(1, Math.min(WARM_PARALLEL, total));
-    var workers = [];
-    for (var k = 0; k < n; k++) {
-      var w = _warmWorker || (_warmWorker = makeWarmWorker());
-      workers.push(w);
-    }
-    var p = Promise.all(workers.map(function (w) { return workerLoop(w); })).then(function () {
+    var worker = _warmWorker || (_warmWorker = makeWarmWorker());
+    var p = workerLoop(worker).then(function () {
       if (broken) {
         _warmWorker = null;    /* a wedged engine must not be reused — recompile next run */
         throw broken;
@@ -1345,6 +1350,24 @@
       return { done: done, skipped: skipped, failed: failed, total: total };
     });
     p.cancel = function () { stopped = true; };
+    /* Jump pending words to the front of the queue so a quiz that started
+       mid-warm gets its own words cached ASAP (the quiz plays cached audio
+       only — this shortens how long its words stay silent). Words already
+       processed are ignored; the pulled words keep their relative order.
+       No-op once stopped/aborted. */
+    p.prioritize = function (prioWords) {
+      if (stopped || broken || !prioWords || !prioWords.length) return;
+      var want = {}, k;
+      for (k = 0; k < prioWords.length; k++) {
+        var w = String(prioWords[k] || '');
+        if (w) want[w] = true;
+      }
+      var pulled = [];
+      for (var j = total - 1; j >= i; j--) {
+        if (want[words[j]]) { pulled.unshift(words[j]); words.splice(j, 1); }
+      }
+      if (pulled.length) words.splice.apply(words, [i, 0].concat(pulled));
+    };
     return p;
   }
 
@@ -1419,6 +1442,7 @@
     stop: stop,
     prefetch: prefetch,
     warmCache: warmCache,
+    hasCachedWord: hasCachedWord,
     stored: storedList,
     clearWordCache: clearWordCache,
     cacheStats: wordCacheStats,

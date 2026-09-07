@@ -690,6 +690,14 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
   ok(!!doc.querySelector('#warmBtn') && !!doc.querySelector('#warmBox'), 'pre-heat button + box present in settings');
   ok(doc.querySelector('#warmBox').hidden, 'pre-heat box hidden for a non-Supertonic voice');
   ok(typeof window.NeuralTTS.warmCache === 'function', 'NeuralTTS.warmCache exposed');
+  ok(typeof window.NeuralTTS.hasCachedWord === 'function', 'NeuralTTS.hasCachedWord exposed');
+  {
+    /* no OPFS in jsdom → nothing is ever cached; non-Supertonic voices are
+       never "cached" either (the word cache belongs to Supertonic) */
+    const a = await window.NeuralTTS.hasCachedWord('hola', { voice: 'st-F1' });
+    const b = await window.NeuralTTS.hasCachedWord('hola', { voice: 'kokoro-ef_dora' });
+    ok(a === false && b === false, 'hasCachedWord resolves false (no cache / non-Supertonic)');
+  }
   ok(typeof window.NeuralTTS.cacheStats === 'function' && typeof window.NeuralTTS.clearWordCache === 'function',
     'NeuralTTS.cacheStats + clearWordCache exposed');
   ok(!!doc.querySelector('#cacheStats') && !!doc.querySelector('#clearCacheBtn'), 'cache size + clear-cache controls present');
@@ -714,14 +722,18 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
      promise). Six words: the 5th consecutive failure throws 'Warm stopped…'. */
   {
     let err = null, lastProg = null;
-    await window.NeuralTTS.warmCache(
+    const pj = window.NeuralTTS.warmCache(
       ['hola', 'adiós', 'casa', 'perro', 'gato', 'luna'],
       { voice: 'st-F1' },
       (p) => { lastProg = p; }
-    ).then(() => { }, (e) => { err = e; });
+    );
+    await pj.then(() => { }, (e) => { err = e; });
     ok(err && /Warm stopped/.test(err.message), 'warmCache aborts on consecutive engine failures: ' + (err && err.message));
     ok(lastProg && lastProg.failed === 5 && lastProg.total === 6,
       'breaker stops the list at the failure cap (failed=' + (lastProg && lastProg.failed) + ' of 6)');
+    ok(typeof pj.prioritize === 'function', 'warmCache promise carries .prioritize');
+    pj.prioritize(['hola']);   /* after settle: no-op, must not throw */
+    pj.prioritize(null);       /* defensive: null/empty input is a no-op */
   }
   /* cacheStats resolves (0 bytes/count in jsdom — no OPFS) and clearWordCache returns a count */
   {

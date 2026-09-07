@@ -22,7 +22,11 @@ const TTS_JSON = JSON.stringify({
   ae: { sample_rate: 44100, base_chunk_size: 512 },
   ttl: { chunk_compress_factor: 4, latent_dim: 32 }
 });
-const INDEXER = JSON.stringify(new Array(65536).fill(42));
+const INDEXER = JSON.stringify((function () {   /* identity map: id == codepoint, so the stub can decode words back */
+  const a = new Array(65536);
+  for (let i = 0; i < a.length; i++) a[i] = i;
+  return a;
+})());
 const STYLE = JSON.stringify({
   style_ttl: { data: [[1, 2, 3, 4]], dims: [1, 4] },
   style_dp: { data: [[5, 6]], dims: [1, 2] }
@@ -62,7 +66,23 @@ await warm(['hola', 'adiós', 'gato', 'casa', 'perro'], 'run 1');
 /* run 2: the SAME persistent worker and SAME compiled sessions — catches any
    buffer reuse across words (the exact bug that froze the old warm) */
 await warm(['luna', 'sol', 'mesa', 'silla', 'puerta', 'ventana'], 'run 2');
-/* run 3: cancellation still resolves cleanly */
+/* run 3: prioritization — a word pulled to the front is processed right after
+   the in-flight word, ahead of the rest of the queue */
+{
+  const before = ort.stats.order.length;
+  const p = NTT.warmCache(['uno', 'dos', 'tres', 'cuatro', 'cinco'], { voice: 'st-F1', rate: 1 });
+  assert.ok(typeof p.prioritize === 'function', 'warmCache promise carries .prioritize');
+  p.prioritize(['cinco']);   /* sync: only 'uno' (index 0) is in flight, 'cinco' still pending */
+  const res = await p;
+  assert.equal(res.failed, 0, 'prioritized warm: no failures');
+  const order = ort.stats.order.slice(before).map(function (s) {
+    return s.replace(/^<es>/, '').replace(/<\/es>$/, '').replace(/\.$/, '');
+  });
+  assert.deepEqual(order, ['uno', 'cinco', 'dos', 'tres', 'cuatro'],
+    'prioritized word jumps the queue (got: ' + order.join(',') + ')');
+  p.prioritize(['hola']);   /* after completion: no-op, must not throw */
+}
+/* run 4: cancellation still resolves cleanly */
 {
   const p = NTT.warmCache(['uno', 'dos', 'tres', 'cuatro'], { voice: 'st-F1', rate: 1 });
   p.cancel();

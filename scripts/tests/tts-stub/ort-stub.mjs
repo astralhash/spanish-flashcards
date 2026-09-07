@@ -12,6 +12,7 @@
 
 var MODEL_SIZES = [1001, 1002, 1003, 1004];   /* dp, te, ve, voc — dispatch key */
 var creates = 0, runs = 0;
+var wordOrder = [];                            /* decoded word per dp.run — processing order */
 
 function neuter(buf) {
   if (buf && buf.byteLength > 0) structuredClone(new Map(), { transfer: [buf] });
@@ -49,7 +50,8 @@ class Session {
     }
     for (i = 0; i < names.length; i++) neuter(feeds[names[i]].data.buffer);   /* proxy transfer */
     switch (this.kind) {
-      case 0:   /* duration predictor */
+      case 0:   /* duration predictor — decode the word from its token ids */
+        wordOrder.push(Array.from(snap.text_ids.data).map(function (n) { return String.fromCharCode(Number(n)); }).join(''));
         return { duration: f32([1.0], [1]) };
       case 1:   /* text encoder */
         return { text_emb: f32([1, 2, 3], [1, 1, 3]) };
@@ -76,5 +78,10 @@ export var InferenceSession = {
     return new Session(size);
   }
 };
-/* test introspection: how many creates / runs the stub saw */
-export var stats = { get creates() { return creates; }, get runs() { return runs; } };
+/* test introspection: how many creates / runs the stub saw, and the order in
+   which words were processed (one dp.run per word) */
+export var stats = {
+  get creates() { return creates; },
+  get runs() { return runs; },
+  get order() { return wordOrder; }
+};

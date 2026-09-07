@@ -134,6 +134,16 @@ to hit round totals — exceeding targets is fine.
   the card it was spoken for: `renderCard`/`renderChalQ` cancel stale speech,
   and challenge MC rounds use `advanceAfterSpeech()` so the next question only
   appears once the revealed word has finished playing (capped at ~3.2 s).
+  While the Supertonic pre-heat batch is running, the quiz plays **cached
+  audio only**: `speak()` in app.js gates on `NeuralTTS.hasCachedWord(text,
+  {voice, rate})` (memory or OPFS hit for that voice/rate key) and stays
+  silent for uncached words — synthesizing one mid-warm would contend for the
+  single ort proxy worker. An uncached word (and every word of a quiz that
+  starts mid-warm, via `warmJob.prioritize(esWords)`) jumps to the FRONT of
+  the warm queue, so the next reveal plays from cache within moments. The
+  warm's own status lines (compiles/downloads) are batch progress: while
+  `warmJob` is set the quiz orb ignores engine status (no spinner) and
+  `ttsBusy()` reads false; both resync when the warm ends.
 - **Rating keys**: `1`–`4` grade everywhere a 4-option gesture exists
   (flashcard answer face, pretest picks, challenge MC). The right-hand home
   row does the same on any layout — `j`→again, `k`→hard, `l`→good, `ö`→easy
@@ -233,11 +243,12 @@ load and no inference**. Kokoro/Piper synthesize directly (no cache).
   synthesizes every Spanish word with the selected Supertonic voice (words
   already on disk are skipped) so the whole deck plays instantly offline. It
   never plays audio and resolves to `{done, skipped, failed, total, percent}`
-  with a `.cancel()`. Parallelism is hard **1** (`WARM_PARALLEL = 1`):
-  onnxruntime-web runs with `env.wasm.proxy` on, and that proxy is a **single
-  worker shared by every session** — extra "workers" never synthesized in
-  parallel, they only doubled the model memory inside the proxy (~2 × 380 MB,
-  OOM recipe). Worse, the proxy **transfers** (neuters) the model ArrayBuffer
+  with a `.cancel()`. Parallelism is hard **1** (strictly serial): the warm
+  runs ONE worker with its own compiled session set — onnxruntime-web runs
+  with `env.wasm.proxy` on, and that proxy is a **single worker shared by
+  every session**, so extra "workers" never synthesized in parallel, they
+  only doubled the model memory inside the proxy (~2 × 380 MB, OOM recipe).
+  Worse, the proxy **transfers** (neuters) the model ArrayBuffer
   to its worker on every `InferenceSession.create` — even a failed create — so
   `supersonic.session()` hands each attempt a private `buf.slice(0)` copy;
   never create a session from a shared `assets()` buffer (a second warm

@@ -2728,15 +2728,7 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
   ];
   var ST_TOTAL = ST_ASSETS.reduce(function (s, a) { return s + a[1]; }, 0);
   var ST_STEPS = 8;            /* denoise steps (official default; 5 low – 12 high) */
-  /* Warm parallelism: hard 1. onnxruntime-web runs with env.wasm.proxy = true,
-     and the proxy is a SINGLE worker shared by every session — so a second
-     "worker" never synthesized in parallel; it only doubled the model memory
-     inside the proxy (~2 × 380 MB, an OOM recipe) and multiplied failure
-     modes (its sessions were also fed the shared, transferred asset buffers —
-     see the note in session()). One worker, own compiled sessions, steady
-     count. Revisit only if ort ever gives per-session proxy workers. */
-  var WARM_PARALLEL = 1;
-  /* One-time asset download shared by every warm worker and by the interactive
+  /* One-time asset download shared by the warm worker and the interactive
      engine, so the ~380 MB is fetched (or read from OPFS) exactly once. */
   var _assetsP = null;
   function assets() {
@@ -3165,10 +3157,11 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
      sessions (which onnxruntime-web doesn't guarantee to be safe). Reuses the
      shared asset download (assets()), the voice-style tensors
      (supersonic.style) and the shared ids/infer logic — call
-     `supersonic.infer.call(worker, ...)`. Only ONE worker is ever created
-     (WARM_PARALLEL is 1): ort's wasm proxy funnels every session through a
-     single shared proxy worker anyway, so extra workers would just double the
-     model memory inside it. The worker is cached across warm runs so a retry
+     `supersonic.infer.call(worker, ...)`. The warm is strictly SERIAL —
+     exactly one worker, one compiled session set: ort's wasm proxy funnels
+     every session through a single shared proxy worker, so more "workers"
+     never synthesized in parallel; they only doubled the model memory inside
+     it (an OOM recipe). The worker is cached across warm runs so a retry
      after a Stop doesn't re-pay the minutes-long compile. */
   var _warmWorker = null;
   function makeWarmWorker() {
@@ -3364,6 +3357,23 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
       });
     }).catch(function () { return false; });
   }
+  /* Is this word already in the Supertonic word cache (memory or OPFS) for the
+     given voice/rate? Lets the app stay silent for uncached words while the
+     pre-heat batch owns the engine — synthesizing one mid-warm would contend
+     for the single ort proxy worker (or compile a second session set).
+     Best-effort: false for non-Supertonic voices and any lookup failure. */
+  function hasCachedWord(text, opts) {
+    opts = opts || {};
+    var meta = VOICES[opts.voice] || VOICES[DEFAULT_VOICE];
+    if (meta.engine !== 'supertonic') return Promise.resolve(false);
+    var rate = Math.max(0.7, Math.min(2, Number(opts.rate) || 1));
+    try {
+      var tPre = supersonic.prep(text);
+      var key = wordKey(meta.voice, tPre, rate);
+      if (wordMemGet(key)) return Promise.resolve(true);
+      return wordCacheGet(key).then(function (hit) { return !!hit; });
+    } catch (e) { return Promise.resolve(false); }
+  }
   var _actx = null;   /* shared AudioContext for background Opus encodes */
   function opusMime() {
     try {
@@ -3551,7 +3561,7 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
   /* Pre-heat the Supertonic Opus word cache: synthesize every word and store the
      encoded audio so later repeats play instantly with no model load or
      inference. Words already cached are skipped (and count as done). One word
-     is synthesized at a time (see WARM_PARALLEL); each step is bounded by a
+     at a time, serially (see makeWarmWorker); each step is bounded by a
      watchdog so a wedged ort proxy worker can never freeze the batch forever
      (it used to stall at "N-1 remaining" when the proxy died mid-run), and a
      run of consecutive failures aborts the batch with a clear error instead of
@@ -3653,13 +3663,8 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
       }
       return next();
     }
-    var n = Math.max(1, Math.min(WARM_PARALLEL, total));
-    var workers = [];
-    for (var k = 0; k < n; k++) {
-      var w = _warmWorker || (_warmWorker = makeWarmWorker());
-      workers.push(w);
-    }
-    var p = Promise.all(workers.map(function (w) { return workerLoop(w); })).then(function () {
+    var worker = _warmWorker || (_warmWorker = makeWarmWorker());
+    var p = workerLoop(worker).then(function () {
       if (broken) {
         _warmWorker = null;    /* a wedged engine must not be reused — recompile next run */
         throw broken;
@@ -3668,6 +3673,24 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
       return { done: done, skipped: skipped, failed: failed, total: total };
     });
     p.cancel = function () { stopped = true; };
+    /* Jump pending words to the front of the queue so a quiz that started
+       mid-warm gets its own words cached ASAP (the quiz plays cached audio
+       only — this shortens how long its words stay silent). Words already
+       processed are ignored; the pulled words keep their relative order.
+       No-op once stopped/aborted. */
+    p.prioritize = function (prioWords) {
+      if (stopped || broken || !prioWords || !prioWords.length) return;
+      var want = {}, k;
+      for (k = 0; k < prioWords.length; k++) {
+        var w = String(prioWords[k] || '');
+        if (w) want[w] = true;
+      }
+      var pulled = [];
+      for (var j = total - 1; j >= i; j--) {
+        if (want[words[j]]) { pulled.unshift(words[j]); words.splice(j, 1); }
+      }
+      if (pulled.length) words.splice.apply(words, [i, 0].concat(pulled));
+    };
     return p;
   }
 
@@ -3742,6 +3765,7 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
     stop: stop,
     prefetch: prefetch,
     warmCache: warmCache,
+    hasCachedWord: hasCachedWord,
     stored: storedList,
     clearWordCache: clearWordCache,
     cacheStats: wordCacheStats,
@@ -4088,6 +4112,22 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
     /* HD selected: HD or silence — no system-voice fallback, even when
        synthesis fails or is superseded by fast card progression. */
     if (window.NeuralTTS) {
+      /* While the pre-heat batch owns the engine, only play words that are
+         already cached — a first-time synthesis would contend for the single
+         ort proxy worker (or even compile a second session set mid-warm).
+         An uncached word stays silent now but jumps to the front of the warm
+         queue, so its next reveal plays from cache. */
+      if (warmJob) {
+        NeuralTTS.hasCachedWord(text, { voice: settings.hdVoice, rate: settings.rate }).then(function (cached) {
+          if (cached) {
+            NeuralTTS.speak(text, { voice: settings.hdVoice, rate: settings.rate })
+              .catch(function () {});
+          } else if (warmJob && warmJob.prioritize) {
+            warmJob.prioritize([text]);   /* the word on screen is wanted now — cache it next */
+          }
+        });
+        return;
+      }
       NeuralTTS.speak(text, { voice: settings.hdVoice, rate: settings.rate })
         .catch(function () { /* stay silent; ⚠ status line in settings explains */ });
     }
@@ -4213,7 +4253,11 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
     } catch (e) { voiceAnalyserStop(); return false; }
   }
   function onHdStatus(s) {
-    voiceLoading = !!(s && s.status === 'loading');
+    /* While the pre-heat batch runs, its status lines (model compiles, asset
+       downloads) are batch progress, not quiz narration — the orb stays still.
+       Quiz audio during a warm is cached plays only, which the orb follows via
+       onHdAudio. Resynced from the live status when the warm ends. */
+    voiceLoading = !warmJob && !!(s && s.status === 'loading');
     voiceSync();
   }
   function onHdAudio(ev) {
@@ -4233,7 +4277,8 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
       if (window.speechSynthesis && (window.speechSynthesis.speaking || window.speechSynthesis.pending)) return true;
     } catch (e) {}
     try {
-      if (settings.hd && window.NeuralTTS && NeuralTTS.status().status === 'loading') return true;
+      /* the pre-heat batch's 'loading' is batch progress, not quiz narration */
+      if (settings.hd && window.NeuralTTS && !warmJob && NeuralTTS.status().status === 'loading') return true;
     } catch (e) {}
     return false;
   }
@@ -4406,9 +4451,18 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
       revoked: new Set(), skippedDue: s.skippedDue,
       missed: [], pre: null, preLocked: false, preWaiting: false, preCorrect: false, typed: 'idle', curDir: settings.dir
     };
+    prioritizeWarm(sess.ids.map(function (id) { return entryById(id).es; }));
     if (s.total === 0) { renderDone(s.skippedDue ? 'All caught up — the rest awaits tomorrow ⏳' : 'Nothing due right now 🎉', 0); return; }
     show('scr-quiz');
     renderCard();
+  }
+
+  /* A quiz that starts while the pre-heat batch runs jumps its own words to
+     the front of the warm queue — the quiz plays cached audio only, so the
+     sooner the warm reaches these words, the sooner their audio is back. */
+  function prioritizeWarm(esWords) {
+    if (!warmJob || !warmJob.prioritize) return;
+    try { warmJob.prioritize(esWords.filter(Boolean)); } catch (e) { /* best-effort */ }
   }
 
   /* a card the learner has never seen at all (no state, or untouched) */
@@ -4818,6 +4872,7 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
       missed: [], allMissed: [], chInput: false, waiting: false
     };
     if (!qs.length) { toast('Not enough words in this cluster yet'); return; }
+    prioritizeWarm(qs.map(function (q) { return q.es; }));
     var def = C.CLUSTERS[key];
     $('#chCluster').textContent = def.icon + ' ' + def.label;
     show('scr-chal');
@@ -5310,6 +5365,7 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
       $('#warmMsg').textContent = left > 0 ? 'warming… ' + left + ' remaining' : '';
     }).then(function () {
       warmJob = null;
+      warmResyncOrb();   /* warm's status lines no longer suppressed — resync the orb */
       var prog = warmProg || { done: 0, skipped: 0, failed: 0, total: words.length };
       if (warmCancelled) {
         $('#warmMsg').textContent = 'Stopped — ' + (prog.done + prog.skipped) + ' / ' + prog.total + ' cached';
@@ -5322,9 +5378,18 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
       if (!warmCancelled) toast('Word audio cache warmed');
     }).catch(function (err) {
       warmJob = null;
+      warmResyncOrb();
       renderWarm();
       $('#warmMsg').textContent = '⚠ ' + ((err && err.message) || err);
     });
+  }
+  /* the orb ignored the warm's status lines while it ran — after it ends,
+     return to honest status-driven display (e.g. a compile left pending) */
+  function warmResyncOrb() {
+    try {
+      voiceLoading = !!(window.NeuralTTS && NeuralTTS.status().status === 'loading');
+    } catch (e) { voiceLoading = false; }
+    voiceSync();
   }
   function cancelWarm() {
     if (!warmJob) return;
