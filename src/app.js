@@ -328,6 +328,10 @@
       u.rate = Math.max(0.5, Math.min(1.5, Number(settings.rate) || 0.92));
       var v = pickSystemVoice();
       if (v) u.voice = v;
+      /* system voices expose no audio tap, so the orb gets a gentle CSS pulse */
+      u.onstart = function () { sysSpeaking = true; voiceShowOrb(false); };
+      var endSys = function () { if (sysSpeaking) { sysSpeaking = false; voiceSync(); } };
+      u.onend = endSys; u.onerror = endSys;
       window.speechSynthesis.cancel();
       window.speechSynthesis.speak(u);
     } catch (e) { /* speech unavailable */ }
@@ -335,8 +339,125 @@
   /* stop ongoing narration — used when a new card/question renders, so audio
      from the previous word never bleeds over the current one */
   function stopSpeech() {
+    sysSpeaking = false;
     try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {}
-    try { if (window.NeuralTTS) NeuralTTS.stop(); } catch (e) {}
+    try { if (window.NeuralTTS) NeuralTTS.stop(); } catch (e) {}   /* emits audio 'stop' → orb hides */
+    voiceSync();
+  }
+  /* ---- voice activity orb: flowing spinner while the HD voice generates, orb
+     pulsing with the voice while it plays. One element morphs between states
+     and docks bottom-center of the active card (header is the fallback home).
+     HD amplitude comes from a WebAudio analyser tapped off the live <audio>
+     element (NeuralTTS.onAudio); system voices have no tap → CSS pulse. */
+  var voiceOrb = null, voiceLoading = false, hdPlaying = false, sysSpeaking = false;
+  var voiceAC = null, voiceAn = null, voiceSrc = null, voiceBuf = null, voiceRaf = 0;
+  function orbEl() { if (!voiceOrb) voiceOrb = $('#voiceOrb'); return voiceOrb; }
+  function voiceReduced() {
+    try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
+    catch (e) { return false; }
+  }
+  function voiceAnalyserStop() {
+    if (voiceRaf) { try { cancelAnimationFrame(voiceRaf); } catch (e) {} voiceRaf = 0; }
+    if (voiceSrc) { try { voiceSrc.disconnect(); } catch (e) {} voiceSrc = null; }
+    voiceAn = null; voiceBuf = null;
+  }
+  function orbHide() {
+    voiceAnalyserStop();
+    var o = orbEl();
+    if (o) { o.hidden = true; o.classList.remove('spin', 'orb', 'pulse'); o.style.transform = ''; }
+  }
+  /* visible card for the orb: challenge card, else the open quiz panel
+     (pretest / typed / flashcard), else null = stay in the header */
+  function voiceSlot() {
+    var chal = $('#scr-chal'), quiz = $('#scr-quiz');
+    if (chal && !chal.hidden) return $('#chal-q-card');
+    if (quiz && !quiz.hidden) {
+      var pre = $('#pretestPanel'), type = $('#typePanel'), flip = $('#flip');
+      if (pre && !pre.hidden) return pre;
+      if (type && !type.hidden) return type;
+      if (flip && !flip.hidden) return flip;
+    }
+    return null;
+  }
+  function voicePlace() {
+    var o = orbEl(); if (!o) return;
+    var slot = voiceSlot();
+    if (slot) { if (o.parentNode !== slot) slot.appendChild(o); return; }
+    var home = document.querySelector('.top-right');
+    if (home && o.parentNode !== home) home.insertBefore(o, home.firstChild);
+  }
+  function voiceShowSpin() {
+    var o = orbEl(); if (!o) return;
+    voiceAnalyserStop();
+    voicePlace();
+    o.hidden = false;
+    o.classList.remove('orb', 'pulse');
+    o.style.transform = '';
+    o.classList.add('spin');
+  }
+  function voiceShowOrb(live) {
+    var o = orbEl(); if (!o) return;
+    voicePlace();
+    o.hidden = false;
+    o.classList.remove('spin');
+    o.classList.add('orb');
+    o.classList.toggle('pulse', !live);
+    if (!live) o.style.transform = '';
+  }
+  /* derive the display from the three flags — callers only set flags */
+  function voiceSync() {
+    if (hdPlaying || sysSpeaking) return;   /* orb already up, owned by the player */
+    if (voiceLoading) voiceShowSpin();
+    else orbHide();
+  }
+  function voiceTick() {
+    if (!voiceAn) return;
+    voiceRaf = requestAnimationFrame(voiceTick);
+    try {
+      voiceAn.getByteTimeDomainData(voiceBuf);
+      var sum = 0, i, d;
+      for (i = 0; i < voiceBuf.length; i++) { d = (voiceBuf[i] - 128) / 128; sum += d * d; }
+      var s = 1 + Math.min(0.55, Math.sqrt(sum / voiceBuf.length) * 2.4);
+      var o = orbEl();
+      if (o) o.style.transform = 'scale(' + s.toFixed(3) + ')';
+    } catch (e) { /* analyser torn down mid-frame */ }
+  }
+  /* tap the live element: MediaElementSource → analyser → speakers (blob: URL
+     is same-origin, so the analyser sees real levels). Fresh element per
+     play(), so one source per element is always legal. */
+  function voiceAttach(a) {
+    voiceAnalyserStop();
+    if (!a || voiceReduced()) return false;
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC || typeof requestAnimationFrame !== 'function') return false;
+      if (!voiceAC) voiceAC = new AC();
+      if (voiceAC.state === 'suspended') voiceAC.resume().catch(function () {});
+      voiceSrc = voiceAC.createMediaElementSource(a);
+      voiceAn = voiceAC.createAnalyser();
+      voiceAn.fftSize = 256;
+      voiceAn.smoothingTimeConstant = 0.55;
+      voiceSrc.connect(voiceAn);
+      voiceAn.connect(voiceAC.destination);
+      voiceBuf = new Uint8Array(voiceAn.fftSize);
+      voiceTick();
+      return true;
+    } catch (e) { voiceAnalyserStop(); return false; }
+  }
+  function onHdStatus(s) {
+    voiceLoading = !!(s && s.status === 'loading');
+    voiceSync();
+  }
+  function onHdAudio(ev) {
+    if (!ev) return;
+    if (ev.type === 'play') {
+      hdPlaying = true;
+      voiceShowOrb(voiceAttach(ev.audio));
+    } else {   /* 'ended' | 'stop' */
+      hdPlaying = false;
+      voiceAnalyserStop();
+      voiceSync();
+    }
   }
   /* is narration currently playing? (system voices and/or the HD engine) */
   function ttsBusy() {
@@ -1461,7 +1582,11 @@
         conjTouch = 0;
       }, { passive: true });
     }
-    if (window.NeuralTTS) NeuralTTS.onStatus(function () { updateHdStatus(); });
+    if (window.NeuralTTS) {
+      NeuralTTS.onStatus(function () { updateHdStatus(); });
+      NeuralTTS.onStatus(onHdStatus);   /* header orb: spinner while generating */
+      if (NeuralTTS.onAudio) NeuralTTS.onAudio(onHdAudio);   /* …orb pulsing while playing */
+    }
     $('#setNew').addEventListener('input', function () {
       settings.newPerDay = parseInt($('#setNew').value, 10);
       $('#setNewVal').textContent = settings.newPerDay + ' / day';

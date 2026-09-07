@@ -585,6 +585,32 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
 .say-btn:hover { opacity: 1; color: var(--accent); transform: scale(1.12); }
 .say-btn:active { transform: scale(.9); }
 
+/* voice activity orb: flowing spinner while the voice generates, pulsing orb
+   while it plays. Docked bottom-center of the active card (overlay, clicks
+   pass through); the header is only the fallback home. */
+.voice-orb {
+  width: 22px; height: 22px; flex: none; pointer-events: none;
+  position: absolute; left: 50%; bottom: 10px; margin-left: -11px; z-index: 5;
+}
+.top-right .voice-orb { position: static; margin-left: 0; }
+#pretestPanel, #typePanel, #chal-q-card { position: relative; }   /* #flip already is */
+.voice-orb.spin {
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0 15%, var(--accent2) 42%, var(--accent) 72%, transparent 100%);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+  animation: vspin .8s linear infinite, vglow 1.6s ease-in-out infinite;
+}
+@keyframes vspin { to { transform: rotate(1turn); } }
+@keyframes vglow { 0%, 100% { opacity: .6; } 50% { opacity: 1; } }
+.voice-orb.orb {
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 32%, #fff 0 8%, var(--accent2) 32%, var(--accent) 68%);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 65%, transparent);
+}
+.voice-orb.orb.pulse { animation: vpulse 1.15s ease-in-out infinite; }
+@keyframes vpulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.28); } }
+
 .say-tip {
   font-size: .8rem; font-weight: 700; color: var(--info);
   background: color-mix(in srgb, var(--info) 10%, var(--surface));

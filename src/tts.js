@@ -13,10 +13,12 @@
  *     cached by Transformers.js (Cache Storage), voice packs by kokoro-js
  *     ("kokoro-voices" cache).
  *
- *   • Supertonic 3 (raw ONNX on onnxruntime-web, WebGPU/WASM) — the quality
- *     ceiling at 44.1 kHz, ~380 MB one-time download cached in OPFS. Pure-JS
- *     text preprocessing with <es> language tags; neutral (not specifically
- *     peninsular) accent.
+  *   • Supertonic 3 (raw ONNX on onnxruntime-web, WebGPU/WASM) — the quality
+  *     ceiling at 44.1 kHz, ~380 MB one-time download cached in OPFS. Pure-JS
+  *     text preprocessing with <es> language tags; neutral (not specifically
+  *     peninsular) accent. Synthesized words are cached as Opus in OPFS on
+  *     first use, so repeats play instantly without re-running inference
+  *     (Chrome/Firefox; Safari has no Opus-encode path and re-synthesizes).
  *
  *   • Piper (VITS via @diffusionstudio/vits-web, ONNX Runtime WASM) — the
  *     lightweight fallback and the ONLY genuinely peninsular-accented tier:
@@ -34,8 +36,10 @@
   *                           of the selected model
   *   .voices                 { id -> meta } of bundled Spanish voices
   *                           (engine, dropdown label, quality/size info)
- *   .speak(text, opts)      Promise; synthesizes + plays (opts: voice, rate)
- *   .stop()                 stop current playback
+  *   .speak(text, opts)      Promise; synthesizes + plays (opts: voice, rate)
+  *   .stop()                 stop current playback (emits an audio 'stop' event)
+  *   .onAudio(fn)            subscribe to playback events { type: play|ended|stop, audio }
+  *                           ('play' carries the live element for UI visualisation)
  *   .prefetch(id, cb)       download engine+model ahead of time (cb gets % 0-100)
  *   .status()               { status: idle|loading|ready|error, detail }
  *   .onStatus(fn)           subscribe to status changes
@@ -165,6 +169,7 @@
   var audio = null;            /* current HTMLAudioElement */
   var blobUrl = null;
   var listeners = [];
+  var audioListeners = [];     /* playback events: { type: play|ended|stop, audio } */
   var st = { status: 'idle', detail: '' };
   var chain = Promise.resolve();   /* serializes downloads/inference */
 
@@ -181,14 +186,22 @@
     return Math.min(100, Math.round((p.loaded / p.total) * 100));
   }
 
-  function stop() {
+  function emitAudio(ev) {
+    for (var i = 0; i < audioListeners.length; i++) {
+      try { audioListeners[i](ev); } catch (e) { /* listener bug must not break us */ }
+    }
+  }
+
+  function stop(quiet) {
+    var had = !!audio;
     if (audio) { try { audio.pause(); } catch (e) {} }
     audio = null;
     if (blobUrl) { try { URL.revokeObjectURL(blobUrl); } catch (e) {} blobUrl = null; }
+    if (had && !quiet) emitAudio({ type: 'stop', audio: null });
   }
 
   function play(blob, rate) {
-    stop();
+    stop(true);   /* superseded/completed audio ends silently here; 'playing'/'ended' below are the signals */
     blobUrl = URL.createObjectURL(blob);
     var a = new Audio(blobUrl);
     audio = a;
@@ -197,7 +210,14 @@
       try { a.mozPreservesPitch = true; } catch (e) {}
       a.playbackRate = Math.max(0.6, Math.min(1.4, rate));
     }
-    a.addEventListener('ended', function () { if (audio === a) { stop(); setStatus('ready', ''); } });
+    a.addEventListener('playing', function () { if (audio === a) emitAudio({ type: 'play', audio: a }); });
+    a.addEventListener('ended', function () {
+      if (audio === a) {
+        emitAudio({ type: 'ended', audio: a });
+        stop(true);
+        setStatus('ready', '');
+      }
+    });
     return a.play();
   }
 
@@ -590,17 +610,51 @@
 
     speak: function (text, meta, opts, mySeq) {
       var self = this;
-      setStatus('loading', 'loading Supertonic voice model…');
-      return this.ensure().then(function () {
-        if (mySeq !== seq) return null;
-        return self.style(meta.voice);
+      /* Word cache first: a repeat plays the stored Opus blob instantly and
+         skips the model download + inference entirely (also survives reloads
+         via OPFS). First use synthesizes, plays the WAV immediately, and
+         encodes/stores Opus in the background for next time. */
+      var tPre = null, speedPre = 1, keyPre = null, memHit = null;
+      try {
+        tPre = self.prep(text);
+        speedPre = Math.max(0.7, Math.min(2, Number(opts.rate) || 1));
+        keyPre = wordKey(meta.voice, tPre, speedPre);
+        memHit = wordMemGet(keyPre);
+      } catch (e) { keyPre = null; memHit = null; }
+      if (memHit) {
+        if (mySeq !== seq) return Promise.resolve(null);
+        return play(memHit, 0).then(function () {
+          if (mySeq === seq && st.status !== 'error') setStatus('ready', '');
+        }).catch(function (err) {
+          return fail(mySeq, err, 'supertonic TTS');
+        });
+      }
+      var fromDisk = keyPre ? wordCacheGet(keyPre) : Promise.resolve(null);
+      return fromDisk.then(function (hit) {
+        if (hit && mySeq === seq) {
+          wordMemPut(keyPre, hit);
+          return play(hit, 0).then(function () {
+            if (mySeq === seq && st.status !== 'error') setStatus('ready', '');
+          }).catch(function (err) {
+            return fail(mySeq, err, 'supertonic TTS');
+          }).then(function () { return 'cached'; });
+        }
+        return null;
+      }).then(function (done) {
+        if (done) return done;
+        setStatus('loading', 'loading Supertonic voice model…');
+        return self.ensure().then(function () {
+          if (mySeq !== seq) return null;
+          return self.style(meta.voice);
+        });
       }).then(function (style) {
+        if (!style || style === 'cached') return style;
         if (mySeq !== seq) return null;
         setStatus('loading', 'synthesizing…');
         var ort = self.ort;
-        var t = self.prep(text);
+        var t = tPre || self.prep(text);
+        var speed = speedPre;
         var tIds = self.ids(t);
-        var speed = Math.max(0.7, Math.min(2, Number(opts.rate) || 1));
         var total = new ort.Tensor('float32', new Float32Array([ST_STEPS]), [1]);
         var duration = null;   /* filled by the duration predictor, read below */
         return self.dp.run({ text_ids: tIds.textIds, style_dp: style.dp, text_mask: tIds.textMask }).then(function (o) {
@@ -649,7 +703,10 @@
         }).then(function (o) {
           if (mySeq !== seq || !o) return null;
           var wav = new Float32Array(o.wav_tts.data);
-          return play(wavBlob(wav, self.cfgs.ae.sample_rate), 0);   /* native speed already applied */
+          var sr = self.cfgs.ae.sample_rate;
+          var blob = wavBlob(wav, sr);   /* first use plays the WAV right away… */
+          if (keyPre) wordCacheStore(keyPre, wav, sr, blob);   /* …while Opus is encoded in the background */
+          return play(blob, 0);   /* native speed already applied */
         });
       }).then(function () {
         if (mySeq === seq && st.status !== 'error') setStatus('ready', '');
@@ -698,6 +755,180 @@
       v.setInt16(44 + i * 2, Math.floor(c * 32767), true);
     }
     return new Blob([buf], { type: 'audio/wav' });
+  }
+
+  /* ================= Supertonic word cache (Opus in OPFS) =================
+   * First use of a word synthesizes, plays the WAV immediately, and encodes
+   * Opus (32 kbps webm/ogg via MediaRecorder) in the background for next
+   * time. Repeats play the cached blob instantly — no model load, no
+   * inference. Key covers voice + preprocessed text + rate, so a settings
+   * change naturally misses the cache. Chrome + Firefox encode AND decode;
+   * Safari has no supported Opus-encode path here and falls back to
+   * re-synthesizing (WAV fallback is stored so a future decode-capable pass
+   * can still hit). Everything is best-effort: any failure resolves null and
+   * the caller synthesizes as if uncached. */
+  var WORD_MEM_MAX = 300;
+  var wordMem = new Map();   /* key -> Blob (this session; no OPFS round-trip) */
+  function wordMemGet(key) {
+    if (!key || !wordMem.has(key)) return null;
+    var b = wordMem.get(key);
+    wordMem.delete(key);     /* refresh LRU position */
+    wordMem.set(key, b);
+    return b;
+  }
+  function wordMemPut(key, blob) {
+    if (!key || !blob) return;
+    if (wordMem.has(key)) wordMem.delete(key);
+    wordMem.set(key, blob);
+    while (wordMem.size > WORD_MEM_MAX) {
+      var oldest = wordMem.keys().next();
+      if (oldest.done) break;
+      wordMem.delete(oldest.value);
+    }
+  }
+  /* cyrb53 hash → compact base36; filename-safe, no raw text on disk */
+  function wordHash(str) {
+    var h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+    for (var i = 0; i < str.length; i++) {
+      var ch = str.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761);
+      h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return ((h2 >>> 0).toString(36) + (h1 >>> 0).toString(36));
+  }
+  function wordKey(voice, preppedText, speed) {
+    var rate = Number(speed).toFixed(2);
+    return 'st-' + String(voice) + '-' + wordHash(String(voice) + '\x00' + String(preppedText) + '\x00' + rate);
+  }
+  var _wdir;   /* OPFS 'tts-cache' dir handle, or null when unavailable */
+  function wordDir() {
+    if (_wdir !== undefined) return Promise.resolve(_wdir || null);
+    try {
+      return navigator.storage.getDirectory().then(function (root) {
+        return root.getDirectoryHandle('tts-cache', { create: true });
+      }).then(function (dir) {
+        _wdir = dir;
+        return dir;
+      }).catch(function () {
+        _wdir = null;
+        return null;
+      });
+    } catch (e) {
+      _wdir = null;
+      return Promise.resolve(null);
+    }
+  }
+  function wordFileGet(dir, name) {
+    return dir.getFileHandle(name).then(function (f) {
+      return f.getFile();
+    }).catch(function () { return null; });
+  }
+  /* opus blob preferred (small); wav fallback accepted (older pass / no encoder) */
+  function wordCacheGet(key) {
+    return wordDir().then(function (dir) {
+      if (!dir) return null;
+      return wordFileGet(dir, key + '.webm').then(function (f) {
+        if (f) return f;
+        return wordFileGet(dir, key + '.ogg');
+      }).then(function (f) {
+        if (f) return f;
+        return wordFileGet(dir, key + '.wav');
+      }).then(function (f) {
+        return f || null;
+      });
+    }).catch(function () { return null; });
+  }
+  function wordCachePut(key, blob, ext) {
+    if (!key || !blob) return Promise.resolve(false);
+    return wordDir().then(function (dir) {
+      if (!dir) return false;
+      return dir.getFileHandle(key + ext, { create: true }).then(function (f) {
+        return f.createWritable().then(function (w) {
+          return w.write(blob).then(function () { return w.close(); });
+        });
+      }).then(function () {
+        wordMemPut(key, blob);
+        return true;
+      });
+    }).catch(function () { return false; });
+  }
+  var _actx = null;   /* shared AudioContext for background Opus encodes */
+  function opusMime() {
+    try {
+      if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return null;
+      if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) return 'audio/webm;codecs=opus';
+      if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) return 'audio/ogg;codecs=opus';
+    } catch (e) { /* no MediaRecorder support (e.g. jsdom) */ }
+    return null;
+  }
+  /* Offline-speed transcode is NOT possible with MediaRecorder (realtime), so
+     this runs detached after the first-use WAV is already playing: ~1-2 s of
+     silent background recording per new word, then the Opus blob is stored. */
+  function encodeOpus(wav, sampleRate, mime) {
+    return new Promise(function (resolve) {
+      var done = function (b) { resolve(b || null); };
+      try {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return done(null);
+        if (!_actx) {
+          try { _actx = new AC(); } catch (e) { return done(null); }
+        }
+        var ctx = _actx;
+        var resume = ctx.state === 'suspended' ? ctx.resume().catch(function () {}) : Promise.resolve();
+        resume.then(function () {
+          var buf;
+          try {
+            buf = ctx.createBuffer(1, wav.length, sampleRate);
+            buf.getChannelData(0).set(wav);
+          } catch (e) { return done(null); }
+          var src = ctx.createBufferSource();
+          src.buffer = buf;
+          var dest = ctx.createMediaStreamDestination();
+          src.connect(dest);
+          var rec;
+          try {
+            rec = new MediaRecorder(dest.stream, { mimeType: mime, audioBitsPerSecond: 32000 });
+          } catch (e) { return done(null); }
+          var chunks = [];
+          rec.ondataavailable = function (ev) { if (ev.data && ev.data.size) chunks.push(ev.data); };
+          rec.onerror = function () { try { rec.stop(); } catch (e) {} done(null); };
+          rec.onstop = function () {
+            if (!chunks.length) return done(null);
+            done(new Blob(chunks, { type: rec.mimeType || mime }));
+          };
+          src.onended = function () { setTimeout(function () { try { rec.stop(); } catch (e) { done(null); } }, 200); };
+          try {
+            rec.start();
+            src.start();
+          } catch (e) { done(null); }
+          /* safety: never hang the background encode */
+          setTimeout(function () {
+            if (rec.state !== 'inactive') { try { rec.stop(); } catch (e) { done(null); } }
+          }, Math.max(4000, (wav.length / sampleRate) * 1000 + 2500));
+        });
+      } catch (e) { done(null); }
+    });
+  }
+  /* Fire-and-forget: Opus when encodable, else keep the WAV fallback so a
+     repeat still skips inference (larger, but instant). Never rejects. */
+  function wordCacheStore(key, wav, sampleRate, wavFallbackBlob) {
+    try {
+      var mime = opusMime();
+      if (!mime) {
+        wordCachePut(key, wavFallbackBlob, '.wav');
+        return;
+      }
+      encodeOpus(wav, sampleRate, mime).then(function (opus) {
+        if (opus) {
+          var ext = mime.indexOf('ogg') !== -1 ? '.ogg' : '.webm';
+          wordCachePut(key, opus, ext);
+        } else {
+          wordCachePut(key, wavFallbackBlob, '.wav');
+        }
+      });
+    } catch (e) { /* cache is best-effort */ }
   }
 
   /* ================= engine: Piper (vits-web) ================= */
@@ -792,6 +1023,29 @@
     return piper.stored();
   }
 
+  /* Drop every cached Supertonic word (memory + OPFS). Resolves to the number
+     of deleted files; best-effort, never rejects. */
+  function clearWordCache() {
+    wordMem.clear();
+    return wordDir().then(function (dir) {
+      if (!dir || !dir.values) return 0;
+      var it = dir.values(), n = 0;
+      function next() {
+        return it.next().then(function (r) {
+          if (r.done) return n;
+          var name = r.value && r.value.name;
+          if (name && name.indexOf('st-') === 0 &&
+              (name.slice(-5) === '.webm' || name.slice(-4) === '.ogg' || name.slice(-4) === '.wav')) {
+            n++;
+            return dir.removeEntry(name).catch(function () {}).then(next);
+          }
+          return next();
+        });
+      }
+      return next().catch(function () { return n; });
+    }).catch(function () { return 0; });
+  }
+
   window.NeuralTTS = {
     engines: ENGINES,
     engineOrder: ENGINE_ORDER,
@@ -800,6 +1054,8 @@
     stop: stop,
     prefetch: prefetch,
     stored: storedList,
+    clearWordCache: clearWordCache,
+    _wordKey: wordKey,   /* exposed for tests: key stability (voice/text/rate) */
     status: function () { return st; },
     onStatus: function (fn) {
       listeners.push(fn);
@@ -807,6 +1063,15 @@
       return function () {
         var i = listeners.indexOf(fn);
         if (i >= 0) listeners.splice(i, 1);
+      };
+    },
+    /* playback lifecycle for UI (voice orb): 'play' carries the live
+       HTMLAudioElement so the UI can analyse it; 'ended'/'stop' mean silence */
+    onAudio: function (fn) {
+      audioListeners.push(fn);
+      return function () {
+        var i = audioListeners.indexOf(fn);
+        if (i >= 0) audioListeners.splice(i, 1);
       };
     }
   };

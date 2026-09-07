@@ -71,6 +71,7 @@ await wait(250);
 
 /* ——— start screen ——— */
 ok($$('#levelChips .chip').length === 4, '4 level chips rendered');
+ok(doc.querySelector('#voiceOrb') && doc.querySelector('#voiceOrb').hidden, 'voice orb present and idle initially');
 
 /* main menu exposes every cluster challenge directly */
 const allClusters = Object.keys(window.Core.CLUSTERS).length;
