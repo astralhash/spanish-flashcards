@@ -216,11 +216,14 @@
         <label class="field check hd"><input type="checkbox" id="setHd"> HD neural voice
           <span class="muted small">— much better pronunciation; downloads once (~20–380 MB depending on voice), then works offline</span>
         </label>
-        <label class="field" id="hdVoiceRow" hidden>HD voice
+        <div class="field" id="hdVoiceRow" hidden>
+          <span>HD model</span>
+          <select id="setHdEngine"></select>
+          <span>Voice</span>
           <select id="setHdVoice"></select>
-          <span class="muted small">The accent comes from the voice itself, not the pronunciation engine: Kokoro voices (Dora/Alex/Santa) sound the most natural but carry a Latin-American tint; Davefx/Sharvard have the authentic Spain accent at lower fidelity; Supertonic is studio-grade but neutral and a big download. All read the same Castilian phonetics (zapato with θ). Everything stays cached for offline use.</span>
+          <span class="muted small">Pick a model first, then a voice. The accent comes from the voice itself, not the pronunciation engine: Kokoro sounds the most natural but carries a Latin-American tint; Piper's Davefx/Sharvard have the authentic Spain accent at lower fidelity; Supertonic is studio-grade but neutral and a big download. All read the same Castilian phonetics (zapato with θ). Everything stays cached for offline use.</span>
           <span id="hdStatus" class="muted small"></span>
-        </label>
+        </div>
         <label class="field">Speaking speed
           <div class="range-row"><input type="range" id="setRate" min="70" max="120" step="1"><span id="setRateVal" class="muted"></span></div>
         </label>

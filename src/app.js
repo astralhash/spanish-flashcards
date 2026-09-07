@@ -28,16 +28,21 @@
       ans: 'type', pretest: true, tts: true,
       /* speech: system-voice override ('' = auto-pick best), speed multiplier,
          and the optional HD neural engine (src/tts.js — Kokoro, Supertonic or Piper).
+         hdEngine picks the model, hdVoice the voice within it (two-step picker).
          autoSpeak: pronounce each word as it is revealed (off = only on demand
          via 🔊 buttons or the S key). */
-      voiceURI: '', rate: 0.92, hd: false, hdVoice: 'kokoro-ef_dora',
+      voiceURI: '', rate: 0.92, hd: false, hdEngine: 'kokoro', hdVoice: 'kokoro-ef_dora',
       autoSpeak: true
     };
   }
   function loadSettings() {
     try {
       var s = JSON.parse(localStorage.getItem(LS_KEY + '.set') || '{}');
-      return Object.assign(defaultSettings(), s);
+      var merged = Object.assign(defaultSettings(), s);
+      /* hdEngine is new: stored settings from before only carry hdVoice, and
+         the default would mask that — derive the model from the voice then */
+      if (hdEngineOrder().indexOf(s.hdEngine) === -1) merged.hdEngine = engineOfVoice(merged.hdVoice);
+      return merged;
     } catch (e) { return defaultSettings(); }
   }
   function saveSettings() { try { localStorage.setItem(LS_KEY + '.set', JSON.stringify(settings)); } catch (e) {} }
@@ -1185,6 +1190,42 @@
     if (v.localService === false) bits.push('network');
     return bits.join(' · ');
   }
+  /* HD neural pickers — two-step: model first, then a voice of that model.
+     settings.hdEngine is new; older stored settings only carry hdVoice, so
+     the model is derived from the voice when hdEngine is missing/invalid. */
+  function engineOfVoice(voiceId) {
+    if (window.NeuralTTS && NeuralTTS.voices[voiceId]) return NeuralTTS.voices[voiceId].engine;
+    if (/^st-/.test(voiceId || '')) return 'supertonic';
+    if (/^es_/.test(voiceId || '')) return 'piper';
+    return 'kokoro';
+  }
+  function hdEngineOrder() {
+    if (window.NeuralTTS && NeuralTTS.engineOrder && NeuralTTS.engineOrder.length) {
+      return NeuralTTS.engineOrder.slice();
+    }
+    var order = [];
+    Object.keys(window.NeuralTTS ? NeuralTTS.voices : {}).forEach(function (id) {
+      var e = NeuralTTS.voices[id].engine;
+      if (order.indexOf(e) === -1) order.push(e);
+    });
+    return order;
+  }
+  function fillHdVoices(engine) {
+    var hdSel = $('#setHdVoice');
+    hdSel.innerHTML = '';
+    Object.keys(NeuralTTS.voices).forEach(function (id) {
+      var v = NeuralTTS.voices[id];
+      if (v.engine !== engine) return;
+      var o = el('option', '', v.label);
+      o.value = id;
+      hdSel.appendChild(o);
+    });
+    var firstOpt = hdSel.querySelector('option');
+    if (!NeuralTTS.voices[settings.hdVoice] || NeuralTTS.voices[settings.hdVoice].engine !== engine) {
+      settings.hdVoice = firstOpt ? firstOpt.value : settings.hdVoice;
+    }
+    hdSel.value = settings.hdVoice;
+  }
   function fillVoiceUI() {
     if (!$('#modal') || !$('#setVoice')) return;
     /* the whole engine block only makes sense when speaking is enabled */
@@ -1204,27 +1245,23 @@
     sel.disabled = esVoices.length === 0;
     if (!esVoices.some(function (v) { return v.voiceURI === settings.voiceURI; })) settings.voiceURI = '';
     sel.value = settings.voiceURI || '';
-    /* HD neural dropdown — each voice entry (src/tts.js) carries its engine,
-       a quality/size label and an engine-group for the <optgroup> headers. */
+    /* HD neural pickers — model first, then the voices of that model. */
     if (window.NeuralTTS) {
-      var hdSel = $('#setHdVoice');
-      hdSel.innerHTML = '';
-      var curGroup = null, grp = null;
-      Object.keys(NeuralTTS.voices).forEach(function (id) {
-        var v = NeuralTTS.voices[id];
-        if (v.group && v.group !== curGroup) {
-          grp = document.createElement('optgroup');
-          grp.label = v.group;
-          hdSel.appendChild(grp);
-          curGroup = v.group;
-        }
-        if (!grp) grp = hdSel;
-        var o = el('option', '', v.label);
-        o.value = id;
-        grp.appendChild(o);
+      var order = hdEngineOrder();
+      var engSel = $('#setHdEngine');
+      engSel.innerHTML = '';
+      order.forEach(function (e) {
+        var meta = (NeuralTTS.engines && NeuralTTS.engines[e]) || { label: e, desc: '' };
+        var o = el('option', '', meta.desc ? meta.label + ' — ' + meta.desc : meta.label);
+        o.value = e;
+        engSel.appendChild(o);
       });
-      var firstOpt = hdSel.querySelector('option');
-      hdSel.value = NeuralTTS.voices[settings.hdVoice] ? settings.hdVoice : (firstOpt ? firstOpt.value : '');
+      var curEngine = engineOfVoice(settings.hdVoice);
+      if (order.indexOf(settings.hdEngine) !== -1) curEngine = settings.hdEngine;
+      else if (order.indexOf(curEngine) === -1) curEngine = order[0];
+      settings.hdEngine = curEngine;
+      engSel.value = curEngine;
+      fillHdVoices(curEngine);
       $('#setHd').checked = !!settings.hd;
       $('#hdVoiceRow').hidden = !settings.hd;
     }
@@ -1244,11 +1281,32 @@
     else if (s.status === 'error') node.textContent = '⚠ ' + s.detail + ' — staying silent (system-voice fallback is off)';
     else node.textContent = '';
   }
-  /* 🔊 next to the voice pickers: speaks a fixed sample with the *selected*
-     controls (settings are already persisted by their change handlers). */
+  /* 🔊 next to the voice pickers: speaks a random sample sentence with the
+     *selected* controls (settings are already persisted by their change
+     handlers). A different sentence each time, so switching models/voices
+     is judged on fresh material; never the same one twice in a row. */
+  var VOICE_SAMPLES = [
+    'Hola, así suena esta voz.',
+    'El zapato cruza la plaza al atardecer.',
+    'La niña canta una canción en el jardín.',
+    '¿Puedes decirme dónde está la estación?',
+    'El cielo está lleno de estrellas esta noche.',
+    'Me encanta el olor a pan recién hecho.',
+    'Los jueves jugamos al fútbol con mis primos.',
+    'La biblioteca cierra a las ocho en punto.',
+    'Qué alegría verte después de tanto tiempo.',
+    'El zorro corre entre los árboles del bosque.'
+  ];
+  var lastSample = -1;
+  function voiceSample() {
+    var i = Math.floor(Math.random() * VOICE_SAMPLES.length);
+    if (i === lastSample) i = (i + 1) % VOICE_SAMPLES.length;
+    lastSample = i;
+    return VOICE_SAMPLES[i];
+  }
   function previewVoice() {
     if (!window.NeuralTTS) return;
-    var sample = 'Hola, así suena esta voz.';
+    var sample = voiceSample();
     if ($('#setHd').checked && !$('#hdVoiceRow').hidden) {
       NeuralTTS.speak(sample, { voice: $('#setHdVoice').value, rate: settings.rate })
         .catch(function () { /* stay silent; the ⚠ status line shows the reason */ });
@@ -1449,6 +1507,14 @@
         NeuralTTS.prefetch(settings.hdVoice).catch(function () { updateHdStatus(); });
         updateHdStatus();
       }
+    });
+    $('#setHdEngine').addEventListener('change', function () {
+      settings.hdEngine = $('#setHdEngine').value;
+      if (window.NeuralTTS) NeuralTTS.stop();
+      fillHdVoices(settings.hdEngine);
+      settings.hdVoice = $('#setHdVoice').value;
+      saveSettings();
+      previewVoice();           /* hear the default voice of the new model */
     });
     $('#setHdVoice').addEventListener('change', function () {
       settings.hdVoice = $('#setHdVoice').value;

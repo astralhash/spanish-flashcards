@@ -27,9 +27,13 @@
  * to silence: when the HD voice is selected, app.js stays quiet rather than
  * degrading to the lower-quality system (Web Speech) voices.
  *
- * Exposes window.NeuralTTS with:
- *   .voices                 { id -> meta } of bundled Spanish voices
- *                           (engine, dropdown label, quality/size info)
+  * Exposes window.NeuralTTS with:
+  *   .engines                { engineId -> { label, desc } } of bundled models,
+  *                           rendered as the first ("model") dropdown; the
+  *                           second ("voice") dropdown lists only the voices
+  *                           of the selected model
+  *   .voices                 { id -> meta } of bundled Spanish voices
+  *                           (engine, dropdown label, quality/size info)
  *   .speak(text, opts)      Promise; synthesizes + plays (opts: voice, rate)
  *   .stop()                 stop current playback
  *   .prefetch(id, cb)       download engine+model ahead of time (cb gets % 0-100)
@@ -50,6 +54,24 @@
      Spain-finetuned Kokoro exists). Piper's es_ES voices are genuinely
      peninsular but lower fidelity (22 kHz). Labels say so explicitly; Piper
      ids keep their historical names so stored settings stay valid. */
+  /* HD models for the first ("model") dropdown. The per-voice `group` strings
+     below mirror these descriptions and are kept for backward compatibility;
+     the settings UI renders engines from here and voices filtered by engine. */
+  var ENGINES = {
+    kokoro: {
+      label: 'Kokoro',
+      desc: 'most natural, but Latin-American accent · 24 kHz · one ~90 MB download'
+    },
+    supertonic: {
+      label: 'Supertonic 3',
+      desc: 'studio quality · 44.1 kHz · ~380 MB one-time · neutral accent (WebGPU recommended)'
+    },
+    piper: {
+      label: 'Piper',
+      desc: 'authentic Spain-accented voices · 22 kHz · more robotic · 20–110 MB per voice'
+    }
+  };
+  var ENGINE_ORDER = ['kokoro', 'supertonic', 'piper'];
   var VOICES = {
     'kokoro-ef_dora': {
       engine: 'kokoro', voice: 'ef_dora',
@@ -771,6 +793,8 @@
   }
 
   window.NeuralTTS = {
+    engines: ENGINES,
+    engineOrder: ENGINE_ORDER,
     voices: VOICES,
     speak: speak,
     stop: stop,
