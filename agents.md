@@ -119,7 +119,9 @@ to hit round totals — exceeding targets is fine.
   spoiling en-es prompts); with `settings.autoSpeak` (default) every reveal
   also speaks the word automatically — hooks live in `revealPair`, `flipCard`
   and `chAnswer`. Engines (`settings.tts`): ranked system voices or the opt-in
-  HD neural voice (`src/tts.js`, Piper WASM via CDN). Speaker buttons blur on
+  HD neural voices (`src/tts.js` — Kokoro-82M, Supertonic 3, or Piper WASM,
+  all lazy-loaded from CDN; accent trade-offs are labeled in the voice
+  dropdown). Speaker buttons blur on
   click and `.say-btn` is exempt from the "focused control" keydown guards, so
   Space always advances instead of re-triggering audio. Narration belongs to
   the card it was spoken for: `renderCard`/`renderChalQ` cancel stale speech,
@@ -136,6 +138,54 @@ to hit round totals — exceeding targets is fine.
 - Failed cards are re-queued once per session (`sess.revoked`) and recorded in
   the "words to watch" recap; challenges replay missed items once in a final
   round (`challenge.missed`/`allMissed`, one replay round max).
+
+## HD voice engines (src/tts.js)
+
+`window.NeuralTTS` exposes three lazily-imported engines behind one interface:
+`speak(text, {voice, rate})` · `stop()` · `prefetch(id, cb)` · `status()` ·
+`onStatus(fn)` · `voices` (`{id -> {engine, voice, group, label}}`, rendered
+as `<optgroup>`s in Settings). One serialized job queue (`enqueue`); every
+speak carries a `seq` token and stale results are dropped, never played.
+Failures degrade to silence (HD-or-silence policy in `speak()` in app.js).
+HD is strictly opt-in (`settings.hd: false` default); `hdVoice` only picks
+which voice is pre-selected when the user enables it.
+
+- **Kokoro-82M** (`kokoro-js@1.2.1` from jsDelivr `+esm`, model
+  `onnx-community/Kokoro-82M-v1.0-ONNX`, dtype `q8` / device `wasm`, ~90 MB
+  shared by all voices, 24 kHz). kokoro-js only phonemizes English, so Spanish
+  goes through **ephone** (`ephone@1.0.2/ephone.js` + Romance pack `lang/roa.js`,
+  ~0.7 MB, voice `es` = Castilian) and into the model via the public
+  `generate_from_ids(tokenizer(ps), {voice})` — mirrors the official Kokoro
+  Spanish pipeline (misaki EspeakG2P). Phonemes are validated against the
+  model vocab via `tokenizer.decode` round-trip. Voices: `ef_dora`,
+  `em_alex`, `em_santa` (fetched as `.bin` from the model repo, cached by
+  kokoro-js). Accent: natural but Latin-American tint — say so in labels.
+- **Supertonic 3** (raw ONNX on `onnxruntime-web`, `ort.all.bundle.min.mjs`,
+  WebGPU preferred with automatic WASM fallback). Assets from
+  `Supertone/supertonic-3` on HF: 4 ONNX files (~380 MB total — the vector
+  estimator alone is ~245 MB) + `tts.json` + `unicode_indexer.json` + per-voice
+  `voice_styles/{F1..F5,M1..M5}.json` (~285 KB each). Text preprocessing is
+  pure JS (`prep()`: NFKD, emoji strip, `<es>…</es>` tag, codepoint→id via the
+  indexer); inference is duration predictor → text encoder → 8-step
+  flow-matching loop (`ST_STEPS`) → vocoder → float32 @44.1 kHz, WAV-encoded
+  by `wavBlob()`. `settings.rate` maps to the native `speed` param (0.7–2.0).
+  Assets are fetched with size-weighted progress and cached in OPFS
+  (`supertonic` dir, best-effort — falls back to no-cache on file://). Session
+  compile shows per-model progress (`(1/4 duration predictor)` … `(4/4
+  vocoder)`) because the vector estimator can take minutes on WASM. Accent:
+  studio quality but neutral (not peninsular). Upstream repo is archived
+  (2026-07); weights frozen on HF under OpenRAIL-M.
+- **Piper** (`@diffusionstudio/vits-web`, ONNX WASM, per-voice 20–110 MB,
+  22 kHz, cached in OPFS). The ONLY genuinely peninsular tier (`es_ES`
+  voices). Kept as the lightweight fallback.
+
+To add a voice: one entry in `VOICES` (`engine` + engine-native `voice` id +
+honest `group`/`label` covering accent, quality and size); Piper ids are
+historic — never rename them (stored settings). Then rebuild + run all four
+test scripts. Verify a new engine end-to-end in headless Chrome against the
+real `src/tts.js` (drive `NeuralTTS.speak` with a stubbed `Audio`) before
+claiming it works — the Kokoro `phonemizer`-only-speaks-English and the
+Supertonic `bufs`-vs-`byName` bugs both escaped unit tests.
 
 ## Do / Don't
 

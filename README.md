@@ -42,9 +42,11 @@ python3 -m http.server 8000       # or: npx serve .
 - **Pronunciation** — 🔊 buttons/chips and the <kbd>S</kbd> key speak Spanish on
   demand; optionally every word is spoken automatically as it is revealed
   (Settings). Two engines: ranked system voices (best installed voice
-  auto-picked, switchable with preview in Settings) and an opt-in **HD neural
-  voice** — Piper models running fully in-browser (WASM), downloaded once
-  (~60–120 MB, cached by the browser) then offline-capable. Falls back to
+  auto-picked, switchable with preview in Settings) and opt-in **HD neural
+  voices** — Kokoro-82M, Supertonic 3 or Piper models running fully
+  in-browser, downloaded once (~20–380 MB depending on voice, cached) then
+  offline-capable. Accent trade-offs (natural-but-Latin vs. authentic-Spain
+  vs. studio-neutral) are labeled in the voice dropdown. Falls back to
   system speech automatically. Space always advances to the next word, even
   right after using a speaker button.
 - **Cluster challenges** — multiple-choice or typed bursts over word groups:
@@ -67,7 +69,7 @@ python3 -m http.server 8000       # or: npx serve .
 | `src/core.cjs` | SRS + challenge logic (pure JS, also a CJS module) |
 | `src/conj.cjs` | Spanish conjugation engine (templates + irregular tables) |
 | `src/app.js` | UI layer (vanilla JS, no framework) |
-| `src/tts.js` | HD neural TTS engine (Piper WASM via CDN, lazy-loaded) |
+| `src/tts.js` | HD neural TTS engines (Kokoro / Supertonic 3 / Piper, all lazy-loaded from CDN) |
 | `data/*.json` | vocabulary sources: arrays of `["spanish","english","level","cluster?"]` |
 | `scripts/build.mjs` | merge + validate `data/*.json`, inject counts, emit `index.html` |
 | `scripts/smoke.mjs` | unit tests for `core.cjs` |

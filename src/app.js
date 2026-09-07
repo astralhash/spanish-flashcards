@@ -27,10 +27,10 @@
       levels: ['b1', 'b2'], dir: 'es-en', newPerDay: 20, sound: true, theme: null,
       ans: 'type', pretest: true, tts: true,
       /* speech: system-voice override ('' = auto-pick best), speed multiplier,
-         and the optional HD neural engine (src/tts.js).
+         and the optional HD neural engine (src/tts.js — Kokoro, Supertonic or Piper).
          autoSpeak: pronounce each word as it is revealed (off = only on demand
          via 🔊 buttons or the S key). */
-      voiceURI: '', rate: 0.92, hd: false, hdVoice: 'es_ES-sharvard-medium',
+      voiceURI: '', rate: 0.92, hd: false, hdVoice: 'kokoro-ef_dora',
       autoSpeak: true
     };
   }
@@ -251,14 +251,15 @@
   function sndBad() { if (settings.sound) beep(190, .2, 'triangle', .08); }
   function sndTic() { if (settings.sound) beep(440, .045, 'sine', .04); }
 
-  /* ---- speech (text-to-speech) + production prompts ---- */
-  /* The production effect: saying words aloud (or at least hearing them right
-     after a recall attempt) strengthens memory for the spoken form.
-     Two engines, selected in settings:
-       1. HD neural voice (Piper WASM via src/tts.js) — opt-in, downloaded once.
-          When HD is chosen it is HD or silence: synthesis may be slow, still
-          loading, or superseded by fast card progression — we never degrade
-          to the low-quality system voice, we just stay quiet.
+   /* ---- speech (text-to-speech) + production prompts ---- */
+   /* The production effect: saying words aloud (or at least hearing them right
+      after a recall attempt) strengthens memory for the spoken form.
+      Two engines, selected in settings:
+        1. HD neural voice (src/tts.js — Kokoro-82M, Supertonic 3, or Piper as
+           the lighter fallback) — opt-in, downloaded once. When HD is chosen
+           it is HD or silence: synthesis may be slow, still loading, or
+           superseded by fast card progression — we never degrade to the
+           low-quality system voice, we just stay quiet.
        2. System voices via Web Speech API — used only when HD is off; ranked
           best-first, because getVoices() order is arbitrary and the first
           es* voice is often the worst one installed (compact eSpeak-style
@@ -1203,16 +1204,27 @@
     sel.disabled = esVoices.length === 0;
     if (!esVoices.some(function (v) { return v.voiceURI === settings.voiceURI; })) settings.voiceURI = '';
     sel.value = settings.voiceURI || '';
-    /* HD neural dropdown */
+    /* HD neural dropdown — each voice entry (src/tts.js) carries its engine,
+       a quality/size label and an engine-group for the <optgroup> headers. */
     if (window.NeuralTTS) {
       var hdSel = $('#setHdVoice');
       hdSel.innerHTML = '';
+      var curGroup = null, grp = null;
       Object.keys(NeuralTTS.voices).forEach(function (id) {
-        var o = el('option', '', NeuralTTS.voices[id]);
+        var v = NeuralTTS.voices[id];
+        if (v.group && v.group !== curGroup) {
+          grp = document.createElement('optgroup');
+          grp.label = v.group;
+          hdSel.appendChild(grp);
+          curGroup = v.group;
+        }
+        if (!grp) grp = hdSel;
+        var o = el('option', '', v.label);
         o.value = id;
-        hdSel.appendChild(o);
+        grp.appendChild(o);
       });
-      hdSel.value = NeuralTTS.voices[settings.hdVoice] ? settings.hdVoice : hdSel.firstChild.value;
+      var firstOpt = hdSel.querySelector('option');
+      hdSel.value = NeuralTTS.voices[settings.hdVoice] ? settings.hdVoice : (firstOpt ? firstOpt.value : '');
       $('#setHd').checked = !!settings.hd;
       $('#hdVoiceRow').hidden = !settings.hd;
     }
