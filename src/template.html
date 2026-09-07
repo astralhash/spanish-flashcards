@@ -224,6 +224,23 @@
           <select id="setHdVoice"></select>
           <span class="muted small">Pick a model first, then a voice. The accent comes from the voice itself, not the pronunciation engine: Kokoro sounds the most natural but carries a Latin-American tint; Piper's Davefx/Sharvard have the authentic Spain accent at lower fidelity; Supertonic is studio-grade but neutral and a big download. All read the same Castilian phonetics (zapato with θ). Everything stays cached for offline use.</span>
           <span id="hdStatus" class="muted small"></span>
+          <div class="field" id="warmBox" hidden>
+            <div class="warm-row">
+              <button id="warmBtn" class="secondary warm-btn">🔥 Pre-heat word audio cache</button>
+              <button id="warmCancel" class="ghost warm-cancel" hidden>Stop</button>
+            </div>
+            <span class="muted small">Pre-synthesize every Spanish word with the selected Supertonic voice and store the audio so words play instantly, offline, with no model load. One-time background job.</span>
+            <div class="warm-progress" id="warmProgress" hidden>
+              <div class="warm-bar"><div id="warmFill"></div></div>
+              <span id="warmCount" class="muted small"></span>
+            </div>
+            <span id="warmMsg" class="muted small"></span>
+            <div class="warm-cache-row">
+              <span id="cacheStats" class="muted small">Cached audio: —</span>
+              <button id="clearCacheBtn" class="ghost warm-cancel" title="Delete every cached word audio (all voices)">🗑️ Clear cache</button>
+            </div>
+            <span id="modelStatus" class="muted small"></span>
+          </div>
         </div>
         <label class="field">Speaking speed
           <div class="range-row"><input type="range" id="setRate" min="70" max="120" step="1"><span id="setRateVal" class="muted"></span></div>

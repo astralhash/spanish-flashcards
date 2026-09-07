@@ -11,6 +11,10 @@ node scripts/build.mjs              # validate data, merge, inline -> index.html
 node scripts/smoke.mjs              # core logic unit tests
 node scripts/conj-test.mjs          # conjugation battery
 node scripts/tests/e2e.mjs          # jsdom UI e2e (deps in scripts/tests: npm i)
+node scripts/tests/tts-transfer-test.mjs   # Supertonic infer under ort's
+                                    # buffer-TRANSFER rules (stubbed ort: model
+                                    # bytes neutered per create, tensor data
+                                    # neutered per run — any reuse throws)
 ```
 
 If `node` isn't on PATH, use `/opt/homebrew/bin/node`.
@@ -186,7 +190,18 @@ HD is strictly opt-in (`settings.hd: false` default).
   compile shows per-model progress (`(1/4 duration predictor)` … `(4/4
   vocoder)`) because the vector estimator can take minutes on WASM. Accent:
   studio quality but neutral (not peninsular). Upstream repo is archived
-  (2026-07); weights frozen on HF under OpenRAIL-M.
+  (2026-07); weights frozen on HF under OpenRAIL-M. **ort proxy transfer
+  rules** (both verified in the minified 1.29.0 bundle): the wasm proxy
+  **transfers the model ArrayBuffer to its worker on every
+  `InferenceSession.create`** — even a failed create — so `session()` hands
+  each attempt a private `buf.slice(0)` copy; and every proxied `run()`
+  **transfers the data buffer of each input tensor** (the `ort.Tensor`
+  constructor wraps data by reference) — so `infer()` builds fresh tensors
+  from `.slice()` copies for every single run() call, `style()` caches raw
+  style data + dims (never tensor objects), and `ids()` returns raw ids/mask +
+  dims. Any tensor reused across two runs (or any model buffer reused across
+  two creates) dies as a detached buffer — Firefox fails with "attempting to
+  access detached ArrayBuffer".
 - **Piper** (`@diffusionstudio/vits-web`, ONNX WASM, per-voice 20–110 MB,
   22 kHz, cached in OPFS). The ONLY genuinely peninsular tier (`es_ES`
   voices). Kept as the lightweight fallback.
@@ -214,6 +229,38 @@ load and no inference**. Kokoro/Piper synthesize directly (no cache).
 - **Repeat**: memory → OPFS (`.webm`/`.ogg` preferred, `.wav` fallback) →
   `play(blob)` straight away. The cache check runs **before** `ensure()`, so a
   repeat skips the ~380 MB model path entirely, even after a reload.
+- **Pre-heat**: `NeuralTTS.warmCache(words, {voice, rate}, onProgress)` batch-
+  synthesizes every Spanish word with the selected Supertonic voice (words
+  already on disk are skipped) so the whole deck plays instantly offline. It
+  never plays audio and resolves to `{done, skipped, failed, total, percent}`
+  with a `.cancel()`. Parallelism is hard **1** (`WARM_PARALLEL = 1`):
+  onnxruntime-web runs with `env.wasm.proxy` on, and that proxy is a **single
+  worker shared by every session** — extra "workers" never synthesized in
+  parallel, they only doubled the model memory inside the proxy (~2 × 380 MB,
+  OOM recipe). Worse, the proxy **transfers** (neuters) the model ArrayBuffer
+  to its worker on every `InferenceSession.create` — even a failed create — so
+  `supersonic.session()` hands each attempt a private `buf.slice(0)` copy;
+  never create a session from a shared `assets()` buffer (a second warm
+  worker / the interactive engine after a warm used to get detached 0-byte
+  buffers → every word failed and the run froze at "N-1 remaining"). The warm
+  worker (one, cached across runs in `_warmWorker`, dropped if the run aborts
+  on engine failure) gets its own compiled sessions so a mid-warm 🔊 can't
+  run concurrent inference on the interactive sessions. Every stage is
+  watchdogged (`warmGuard`: lookup 60 s · compile 15 min · word 3 min) and
+  `WARM_MAX_CONSEC_FAILS` (5) consecutive failures abort the batch with a
+  clear error instead of mass-failing the list; `done` counts words that are
+  actually written to disk (the store is awaited). `env.wasm.proxy` also keeps
+  the heavy compile + inference off the main thread (otherwise Firefox reports
+  "this page is slowing your browser" during the minutes-long compile). WASM
+  threads are capped at `ORT_THREADS` (4); Opus encodes run one-at-a-time
+  behind an `ENCODE_MAX` (1) semaphore (MediaRecorder is realtime,
+  main-thread), and the loop yields between words. The Settings modal wires a
+  "Pre-heat word audio cache" button
+  + progress bar that shows only when the HD voice is Supertonic (the Opus
+  cache doesn't exist for Kokoro/Piper), plus a live "Cached audio: X MB · N
+  words" stat, a "Clear cache" button (`clearWordCache`), and a `modelCached()`
+  status that confirms whether the ~380 MB model is already cached (so it isn't
+  re-fetched — `supersonic.asset` awaits the OPFS write).
 - **Key** (`wordKey`, exposed as `NeuralTTS._wordKey` for tests):
   `st2-<voice>-<cyrb53(voice + prep(text) + rate + bitrate)>` — prepped text
   (the same `<es>…</es>` string inference sees) + voice + rate clamped to

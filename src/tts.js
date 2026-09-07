@@ -389,6 +389,11 @@
   var ORT_VER = '1.29.0';
   var ORT_URL = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@' + ORT_VER + '/dist/ort.all.bundle.min.mjs';
   var ORT_DIST = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@' + ORT_VER + '/dist/';
+  /* onnxruntime-web's WASM backend defaults its thread pool to the CPU core
+     count (often 8–16), which can trip Firefox's "this page is slowing your
+     browser" warning during the heavy Supertonic warm. Cap the WASM threads so
+     the tab stays responsive. */
+  var ORT_THREADS = 4;
   /* known sizes (bytes) for download-progress weighting */
   var ST_ASSETS = [
     ['onnx/tts.json', 1500],
@@ -400,6 +405,23 @@
   ];
   var ST_TOTAL = ST_ASSETS.reduce(function (s, a) { return s + a[1]; }, 0);
   var ST_STEPS = 8;            /* denoise steps (official default; 5 low – 12 high) */
+  /* Warm parallelism: hard 1. onnxruntime-web runs with env.wasm.proxy = true,
+     and the proxy is a SINGLE worker shared by every session — so a second
+     "worker" never synthesized in parallel; it only doubled the model memory
+     inside the proxy (~2 × 380 MB, an OOM recipe) and multiplied failure
+     modes (its sessions were also fed the shared, transferred asset buffers —
+     see the note in session()). One worker, own compiled sessions, steady
+     count. Revisit only if ort ever gives per-session proxy workers. */
+  var WARM_PARALLEL = 1;
+  /* One-time asset download shared by every warm worker and by the interactive
+     engine, so the ~380 MB is fetched (or read from OPFS) exactly once. */
+  var _assetsP = null;
+  function assets() {
+    if (!_assetsP) {
+      _assetsP = Promise.all(ST_ASSETS.map(function (a) { return supersonic.asset(a[0]); }));
+    }
+    return _assetsP;
+  }
 
   var supersonic = {
     ort: null, ortP: null,
@@ -483,8 +505,10 @@
             })();
           });
         }).then(function (buf) {
-          self.cachePut(name, buf);
-          return buf;
+          /* await the OPFS write so the model is reliably persisted for the
+             next run (a fire-and-forget write could silently fail/evict and
+             force a full 380 MB re-download next time) */
+          return self.cachePut(name, buf).then(function () { return buf; });
         });
       });
     },
@@ -497,6 +521,12 @@
         this.ortP = import(ORT_URL).then(function (m) {
           self.ort = m;
           try { m.env.wasm.wasmPaths = ORT_DIST; } catch (e) { /* older env shape */ }
+          /* Run the WASM backend in a worker (proxy) so the heavy model compile
+             and inference never block the main thread — Firefox shows "this page
+             is slowing your browser" when the Supertonic compile/inference runs
+             inline. */
+          try { m.env.wasm.proxy = true; } catch (e) { /* env may not expose it yet */ }
+          try { m.env.wasm.numThreads = ORT_THREADS; } catch (e) { /* env may not expose it yet */ }
           return m;
         }).catch(function (err) {
           self.ortP = null;
@@ -510,8 +540,14 @@
       var ort = this.ort;
       var opts = { executionProviders: ['wasm'] };
       var tryWebGpu = typeof navigator !== 'undefined' && !!navigator.gpu;
+      /* CRITICAL: ort-web's wasm proxy TRANSFERS the model ArrayBuffer to its
+         worker on create (neutering the caller's copy), even when the create
+         later fails. Every attempt therefore gets its OWN copy — handing out
+         the shared asset() buffers twice (second warm worker, interactive
+         engine after a warm, ensure() retry) would synthesize sessions from
+         detached 0-byte buffers and fail every word. */
       var make = function (providers) {
-        return ort.InferenceSession.create(buf, { executionProviders: providers });
+        return ort.InferenceSession.create(buf.slice(0), { executionProviders: providers });
       };
       var p = tryWebGpu ? make(['webgpu']).then(function (s) {
         supersonic.ep = 'WebGPU';
@@ -528,7 +564,7 @@
       if (this.ready) return this.ready;
       this.got = {};
       this.ready = this.ensureOrt().then(function () {
-        return Promise.all(ST_ASSETS.map(function (a) { return self.asset(a[0]); }));
+        return assets();
       }).then(function (bufs) {
         var byName = {};
         ST_ASSETS.forEach(function (a, i) { byName[a[0]] = bufs[i]; });
@@ -561,20 +597,25 @@
       });
     },
 
-    /* ---- voice style tensors (F1…M5), ~285 KB each, cached like assets ---- */
+    /* ---- voice style data (F1…M5), ~285 KB each, cached like assets ---- */
     style: function (voice) {
       var self = this;
       if (this.styles[voice]) return Promise.resolve(this.styles[voice]);
       if (!this.styleP[voice]) {
         this.styleP[voice] = this.asset('voice_styles/' + voice + '.json').then(function (buf) {
           var j = JSON.parse(new TextDecoder().decode(buf));
-          var ort = self.ort;
-          var s = {
-            ttl: new ort.Tensor('float32', Float32Array.from(j.style_ttl.data.flat(Infinity)), j.style_ttl.dims),
-            dp: new ort.Tensor('float32', Float32Array.from(j.style_dp.data.flat(Infinity)), j.style_dp.dims)
+          /* RAW data + dims, not tensors: ort's wasm proxy TRANSFERS the data
+             buffer of every input tensor on every run() — a tensor object
+             reused across two runs is a detached-buffer poison pill (Firefox:
+             "attempting to access detached ArrayBuffer"). infer() therefore
+             builds a fresh tensor from a fresh copy for every run() call. */
+          self.styles[voice] = {
+            ttlData: Float32Array.from(j.style_ttl.data.flat(Infinity)),
+            ttlDims: j.style_ttl.dims.slice(),
+            dpData: Float32Array.from(j.style_dp.data.flat(Infinity)),
+            dpDims: j.style_dp.dims.slice()
           };
-          self.styles[voice] = s;
-          return s;
+          return self.styles[voice];
         });
       }
       return this.styleP[voice];
@@ -595,8 +636,10 @@
       return '<es>' + text + '</es>';
     },
 
+    /* Raw token ids + mask (dims included) — NOT tensors. The tensor objects
+       are built fresh (with fresh buffers) at every run() call site in infer(),
+       because ort's proxy transfers input data buffers on every run. */
     ids: function (text) {
-      var ort = this.ort;
       var L = text.length;
       var row = new Array(L).fill(0);
       for (var j = 0; j < L; j++) {
@@ -607,10 +650,78 @@
       for (var i = 0; i < L; i++) ids[i] = BigInt(row[i]);
       var mask = new Float32Array(L);
       for (i = 0; i < L; i++) mask[i] = 1.0;
-      return {
-        textIds: new ort.Tensor('int64', ids, [1, L]),
-        textMask: new ort.Tensor('float32', mask, [1, 1, L])
-      };
+      return { ids: ids, idsDims: [1, L], mask: mask, maskDims: [1, 1, L] };
+    },
+
+    /* Shared Supertonic inference: duration predictor → text encoder → 8-step
+       flow loop → vocoder. onStage is called after each heavy stage so the
+       interactive speak path can release the serialized queue slot when the
+       learner has moved on. Returns { wav, sr } (the 44.1 kHz mono floats) or
+       null. Warm uses this with a no-op onStage. */
+    infer: function (style, preppedText, speed, onStage) {
+      var self = this;
+      var ort = self.ort;
+      var tIds = self.ids(preppedText);
+      var totalData = new Float32Array([ST_STEPS]);
+      var duration = null;   /* filled by the duration predictor, read below */
+      /* ort's wasm proxy transfers the data buffer of EVERY input tensor on
+         EVERY run() — and the ort.Tensor constructor wraps data by reference.
+         So each run() call gets its own freshly-built tensors: anything reused
+         across runs (style data, ids/mask, the text embedding, total steps,
+         the latent mask) is `.slice()`-copied per call; only genuinely
+         single-use buffers (noisy latent per step, final latent) skip the
+         copy — their buffers are replaced before the next run. */
+      var f32T = function (data, dims) { return new ort.Tensor('float32', data.slice(), dims); };
+      var idsT = function () { return new ort.Tensor('int64', tIds.ids.slice(), tIds.idsDims); };
+      var maskT = function () { return f32T(tIds.mask, tIds.maskDims); };
+      return self.dp.run({ text_ids: idsT(), style_dp: f32T(style.dpData, style.dpDims), text_mask: maskT() }).then(function (o) {
+        duration = Array.from(o.duration.data);
+        for (var i = 0; i < duration.length; i++) duration[i] /= speed;
+        return self.te.run({ text_ids: idsT(), style_ttl: f32T(style.ttlData, style.ttlDims), text_mask: maskT() });
+      }).then(function (o) {
+        var embData = new Float32Array(o.text_emb.data);   /* copy once — re-wrapped fresh for all 8 steps */
+        var embDims = o.text_emb.dims.slice();
+        var cfg = self.cfgs, sampleRate = cfg.ae.sample_rate;
+        var chunkSize = cfg.ae.base_chunk_size * cfg.ttl.chunk_compress_factor;
+        var latentLen = Math.floor((Math.floor(duration[0] * sampleRate) + chunkSize - 1) / chunkSize);
+        var latentDim = cfg.ttl.latent_dim * cfg.ttl.chunk_compress_factor;
+        var xt = new Float32Array(latentDim * latentLen);
+        for (var i = 0; i < xt.length; i += 2) {
+          var u1 = Math.max(0.0001, Math.random()), u2 = Math.random();
+          var g = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+          xt[i] = g;
+          if (i + 1 < xt.length) xt[i + 1] = Math.sqrt(-2 * Math.log(u1)) * Math.sin(2 * Math.PI * u2);
+        }
+        var wavLen = Math.floor(duration[0] * sampleRate);
+        var maskLen = Math.floor((wavLen + chunkSize - 1) / chunkSize);
+        var latentMask = new Float32Array(latentLen);
+        for (i = 0; i < latentLen; i++) latentMask[i] = i < maskLen ? 1 : 0;
+        for (i = 0; i < xt.length; i++) xt[i] *= latentMask[i % latentLen];
+        var cur = 0;
+        function step() {
+          var xtT = new ort.Tensor('float32', xt, [1, latentDim, latentLen]);
+          return self.ve.run({
+            noisy_latent: xtT, text_emb: f32T(embData, embDims),
+            style_ttl: f32T(style.ttlData, style.ttlDims),
+            latent_mask: f32T(latentMask, [1, 1, latentLen]), text_mask: maskT(),
+            current_step: new ort.Tensor('float32', new Float32Array([cur]), [1]),
+            total_step: f32T(totalData, [1])
+          }).then(function (o) {
+            xt = new Float32Array(o.denoised_latent.data);   /* copy — the old buffer was transferred away */
+            cur++;
+            if (onStage) onStage();
+            if (cur < ST_STEPS) return step();
+            return new ort.Tensor('float32', xt, [1, latentDim, latentLen]);
+          });
+        }
+        return step();
+      }).then(function (latent) {
+        return self.voc.run({ latent: latent });
+      }).then(function (o) {
+        if (!o) return null;
+        var wav = new Float32Array(o.wav_tts.data);
+        return { wav: wav, sr: self.cfgs.ae.sample_rate };
+      });
     },
 
     speak: function (text, meta, opts, mySeq) {
@@ -676,63 +787,16 @@
           if (!style) return null;
           if (mySeq === seq) setStatus('loading', 'synthesizing…');
           releaseIfStale();
-          var ort = self.ort;
           var t = tPre || self.prep(text);
           var speed = speedPre;
-          var tIds = self.ids(t);
-          var total = new ort.Tensor('float32', new Float32Array([ST_STEPS]), [1]);
-          var duration = null;   /* filled by the duration predictor, read below */
-          return self.dp.run({ text_ids: tIds.textIds, style_dp: style.dp, text_mask: tIds.textMask }).then(function (o) {
-            duration = Array.from(o.duration.data);
-            for (var i = 0; i < duration.length; i++) duration[i] /= speed;
-            return self.te.run({ text_ids: tIds.textIds, style_ttl: style.ttl, text_mask: tIds.textMask });
-          }).then(function (o) {
-            var textEmb = o.text_emb;
-            var cfg = self.cfgs, sampleRate = cfg.ae.sample_rate;
-            var chunkSize = cfg.ae.base_chunk_size * cfg.ttl.chunk_compress_factor;
-            var latentLen = Math.floor((Math.floor(duration[0] * sampleRate) + chunkSize - 1) / chunkSize);
-            var latentDim = cfg.ttl.latent_dim * cfg.ttl.chunk_compress_factor;
-            var xt = new Float32Array(latentDim * latentLen);
-            for (var i = 0; i < xt.length; i += 2) {
-              var u1 = Math.max(0.0001, Math.random()), u2 = Math.random();
-              var g = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-              xt[i] = g;
-              if (i + 1 < xt.length) xt[i + 1] = Math.sqrt(-2 * Math.log(u1)) * Math.sin(2 * Math.PI * u2);
-            }
-            var wavLen = Math.floor(duration[0] * sampleRate);
-            var maskLen = Math.floor((wavLen + chunkSize - 1) / chunkSize);
-            var latentMask = new Float32Array(latentLen);
-            for (i = 0; i < latentLen; i++) latentMask[i] = i < maskLen ? 1 : 0;
-            for (i = 0; i < xt.length; i++) xt[i] *= latentMask[i % latentLen];
-            var latentMaskT = new ort.Tensor('float32', latentMask, [1, 1, latentLen]);
-            var cur = 0;
-            function step() {
-              var xtT = new ort.Tensor('float32', xt, [1, latentDim, latentLen]);
-              return self.ve.run({
-                noisy_latent: xtT, text_emb: textEmb, style_ttl: style.ttl,
-                latent_mask: latentMaskT, text_mask: tIds.textMask,
-                current_step: new ort.Tensor('float32', new Float32Array([cur]), [1]),
-                total_step: total
-              }).then(function (o) {
-                xt = new Float32Array(o.denoised_latent.data);
-                cur++;
-                releaseIfStale();   /* stale → unblock the next speak; keep generating */
-                if (cur < ST_STEPS) return step();
-                return new ort.Tensor('float32', xt, [1, latentDim, latentLen]);
-              });
-            }
-            return step();
-          }).then(function (latent) {
-            return self.voc.run({ latent: latent });
-          }).then(function (o) {
-            if (!o) return null;
-            var wav = new Float32Array(o.wav_tts.data);
-            var sr = self.cfgs.ae.sample_rate;
-            var blob = wavBlob(wav, sr);   /* first use plays the WAV right away… */
-            if (keyPre) wordCacheStore(keyPre, wav, sr, blob);   /* …while Opus is encoded in the background */
-            if (mySeq !== seq) return null;   /* learner moved on: cached, never played */
-            return play(blob, 0);   /* native speed already applied */
-          });
+          return self.infer(style, t, speed, releaseIfStale);
+        }).then(function (out) {
+          if (!out) return null;
+          var wav = out.wav, sr = out.sr;
+          var blob = wavBlob(wav, sr);   /* first use plays the WAV right away… */
+          if (keyPre) wordCacheStore(keyPre, wav, sr, blob);   /* …while Opus is encoded in the background */
+          if (mySeq !== seq) return null;   /* learner moved on: cached, never played */
+          return play(blob, 0);   /* native speed already applied */
         });
         if (keyPre) {
           pendingGen = { key: keyPre, p: gen };   /* re-clicks join this instead of re-synthesizing */
@@ -772,6 +836,60 @@
       });
     }
   };
+
+  /* A Supertonic inference worker: its OWN compiled sessions, so warm can
+     synthesize words without concurrent run() on the interactive engine's
+     sessions (which onnxruntime-web doesn't guarantee to be safe). Reuses the
+     shared asset download (assets()), the voice-style tensors
+     (supersonic.style) and the shared ids/infer logic — call
+     `supersonic.infer.call(worker, ...)`. Only ONE worker is ever created
+     (WARM_PARALLEL is 1): ort's wasm proxy funnels every session through a
+     single shared proxy worker anyway, so extra workers would just double the
+     model memory inside it. The worker is cached across warm runs so a retry
+     after a Stop doesn't re-pay the minutes-long compile. */
+  var _warmWorker = null;
+  function makeWarmWorker() {
+    var w = {
+      ort: null, dp: null, te: null, ve: null, voc: null,
+      cfgs: null, indexer: null, ready: null,
+      ids: supersonic.ids,
+      ensure: function () {
+        var self = w;
+        if (self.ready) return self.ready;
+        self.ready = supersonic.ensureOrt().then(function () {
+          self.ort = supersonic.ort;
+          return assets();
+        }).then(function (bufs) {
+          var byName = {};
+          ST_ASSETS.forEach(function (a, i) { byName[a[0]] = bufs[i]; });
+          self.cfgs = JSON.parse(new TextDecoder().decode(byName['onnx/tts.json']));
+          self.indexer = JSON.parse(new TextDecoder().decode(byName['onnx/unicode_indexer.json']));
+          var jobs = [
+            ['duration predictor', 'onnx/duration_predictor.onnx', 'dp'],
+            ['text encoder', 'onnx/text_encoder.onnx', 'te'],
+            ['vector estimator', 'onnx/vector_estimator.onnx', 've'],
+            ['vocoder', 'onnx/vocoder.onnx', 'voc']
+          ];
+          var chain = Promise.resolve();
+          jobs.forEach(function (job, i) {
+            chain = chain.then(function () {
+              setStatus('loading', 'compiling Supertonic worker… (' + (i + 1) + '/4 ' + job[0] + ')');
+              return supersonic.session(byName[job[1]]);
+            }).then(function (s) { self[job[2]] = s; });
+          });
+          return chain;
+        }).then(function () {
+          setStatus('ready', '');
+          return self;
+        }).catch(function (err) {
+          self.ready = null;       /* allow a retry */
+          throw err;
+        });
+        return self.ready;
+      }
+    };
+    return w;
+  }
 
   /* 16-bit PCM WAV encoder (mirrors upstream writeWavFile) */
   function wavBlob(samples, rate) {
@@ -980,24 +1098,42 @@
       } catch (e) { done(null); }
     });
   }
-  /* Fire-and-forget: Opus when encodable, else keep the WAV fallback so a
-     repeat still skips inference (larger, but instant). Never rejects. */
+  /* Store a synthesized word: Opus when encodable, else keep the WAV fallback
+     so a repeat still skips inference (larger, but instant). Never rejects;
+     resolves once the blob is written (the interactive speak path ignores the
+     promise — the warm awaits it so its "done" count means cached on disk). */
+  /* Background Opus encodes are realtime (MediaRecorder) and each runs its own
+     encoder on the main thread; keep at most ONE in flight so a fast warm loop
+     doesn't pile up encoders and trigger Firefox's "this page is slowing your
+     browser" warning. Writes still land in whatever order they finish. */
+  var ENCODE_MAX = 1;
+  var encodeActive = 0, encodeWait = [];
+  function encodeSlot() {
+    return new Promise(function (res) {
+      if (encodeActive < ENCODE_MAX) { encodeActive++; res(); }
+      else encodeWait.push(res);
+    });
+  }
+  function encodeRelease() {
+    encodeActive = Math.max(0, encodeActive - 1);
+    if (encodeWait.length) { encodeWait.shift()(); }
+  }
   function wordCacheStore(key, wav, sampleRate, wavFallbackBlob) {
-    try {
-      var mime = opusMime();
-      if (!mime) {
-        wordCachePut(key, wavFallbackBlob, '.wav');
-        return;
+    var mime = null;
+    try { mime = opusMime(); } catch (e) { mime = null; }
+    if (!mime) return wordCachePut(key, wavFallbackBlob, '.wav');
+    return encodeSlot().then(function () {
+      return encodeOpus(wav, sampleRate, mime);
+    }).then(function (opus) {
+      if (opus) {
+        var ext = mime.indexOf('ogg') !== -1 ? '.ogg' : '.webm';
+        return wordCachePut(key, opus, ext);
       }
-      encodeOpus(wav, sampleRate, mime).then(function (opus) {
-        if (opus) {
-          var ext = mime.indexOf('ogg') !== -1 ? '.ogg' : '.webm';
-          wordCachePut(key, opus, ext);
-        } else {
-          wordCachePut(key, wavFallbackBlob, '.wav');
-        }
-      });
-    } catch (e) { /* cache is best-effort */ }
+      return wordCachePut(key, wavFallbackBlob, '.wav');
+    }).then(encodeRelease, function (e) {
+      encodeRelease();
+      return wordCachePut(key, wavFallbackBlob, '.wav');   /* still cache something usable */
+    });
   }
 
   /* ================= engine: Piper (vits-web) ================= */
@@ -1089,6 +1225,129 @@
     });
   }
 
+  /* Pre-heat the Supertonic Opus word cache: synthesize every word and store the
+     encoded audio so later repeats play instantly with no model load or
+     inference. Words already cached are skipped (and count as done). One word
+     is synthesized at a time (see WARM_PARALLEL); each step is bounded by a
+     watchdog so a wedged ort proxy worker can never freeze the batch forever
+     (it used to stall at "N-1 remaining" when the proxy died mid-run), and a
+     run of consecutive failures aborts the batch with a clear error instead of
+     burning the whole list. Resolves to { done, skipped, failed, total,
+     percent }; the promise also carries a .cancel() that stops the batch after
+     the current in-flight word. */
+
+  /* Reject if the underlying promise neither resolves nor rejects in time.
+     The orphaned promise is simply abandoned (it can never be cancelled), but
+     the warm moves on and reports honestly instead of freezing. */
+  function warmGuard(p, ms, what) {
+    return new Promise(function (resolve, reject) {
+      var t = setTimeout(function () {
+        reject(new Error(what + ' timed out after ' + Math.round(ms / 1000) + ' s (engine unresponsive)'));
+      }, ms);
+      p.then(function (v) { clearTimeout(t); resolve(v); },
+             function (e) { clearTimeout(t); reject(e); });
+    });
+  }
+  var WARM_LOOKUP_TIMEOUT = 60000;    /* OPFS hit check */
+  var WARM_WORD_TIMEOUT = 180000;     /* style + inference + store for ONE word */
+  var WARM_COMPILE_TIMEOUT = 900000;  /* asset download + first-use compile can take many minutes */
+  var WARM_MAX_CONSEC_FAILS = 5;      /* systematic breakage → stop, don't burn the list */
+
+  function warmCache(words, opts, onProgress) {
+    opts = opts || {};
+    var meta = VOICES[opts.voice] || VOICES[DEFAULT_VOICE];
+    if (meta.engine !== 'supertonic') {
+      return Promise.reject(new Error('The Opus word cache belongs to the Supertonic engine — pick a Supertonic HD voice first.'));
+    }
+    var rate = Math.max(0.7, Math.min(2, Number(opts.rate) || 1));
+    var total = words.length;
+    if (!total) {
+      var empty = { done: 0, skipped: 0, failed: 0, total: 0, percent: 100 };
+      if (onProgress) onProgress(empty);
+      return Promise.resolve(empty);
+    }
+    var i = 0, done = 0, skipped = 0, failed = 0, stopped = false;
+    var broken = null;          /* Error — set when the engine is systematically broken */
+    var consecFails = 0, lastErr = null;
+    function report() {
+      var summary = { done: done, skipped: skipped, failed: failed, total: total };
+      summary.percent = total ? Math.min(100, Math.round((done + skipped) / total * 100)) : 100;
+      if (onProgress) onProgress(summary);
+    }
+    function warmOne(worker, word) {
+      var key = null, tPre = null;
+      try {
+        tPre = supersonic.prep(word);
+        key = wordKey(meta.voice, tPre, rate);
+      } catch (e) { key = null; }
+      var skipP = key ? wordCacheGet(key) : Promise.resolve(null);
+      return warmGuard(skipP, WARM_LOOKUP_TIMEOUT, 'cache lookup').then(function (hit) {
+        if (hit) return 'skipped';
+        if (!tPre) return 'failed';
+        return warmGuard(worker.ensure(), WARM_COMPILE_TIMEOUT, 'Supertonic model compile').then(function () {
+          return warmGuard(supersonic.style(meta.voice).then(function (style) {
+            if (!style) return null;
+            return supersonic.infer.call(worker, style, tPre, rate, null);
+          }).then(function (out) {
+            if (!out) return 'failed';
+            var blob = wavBlob(out.wav, out.sr);
+            /* await the write so "done" means cached on disk, not merely
+               synthesized — the realtime Opus encode is bounded by its own
+               recorder safety timeout */
+            return wordCacheStore(key, out.wav, out.sr, blob).then(function () { return 'done'; });
+          }), WARM_WORD_TIMEOUT, 'Supertonic synthesis');
+        });
+      }).catch(function (err) {
+        console.warn('[vocabes] word-cache warm failed for "' + word + '":', err);
+        lastErr = err;
+        return 'failed';
+      }).then(function (res) {
+        if (res === 'skipped') skipped++;
+        else if (res === 'done') done++;
+        else failed++;
+        report();
+        return res;
+      });
+    }
+    function workerLoop(worker) {
+      function next() {
+        if (stopped || broken || i >= total) return Promise.resolve();
+        var word = String(words[i]); i++;
+        return warmOne(worker, word).then(function (res) {
+          if (res === 'failed') {
+            if (++consecFails >= WARM_MAX_CONSEC_FAILS) {
+              broken = new Error('Warm stopped: ' + consecFails + ' words failed in a row after ' +
+                (done + skipped) + ' cached — engine problem, not word list' +
+                (lastErr ? ' (' + ((lastErr && lastErr.message) || lastErr) + ')' : ''));
+            }
+          } else {
+            consecFails = 0;
+          }
+          /* yield between words so the main thread isn't monopolized by the
+             WASM inference / encoders (Firefox flags long busy loops) */
+          return new Promise(function (r) { setTimeout(r, 0); });
+        }).then(next);
+      }
+      return next();
+    }
+    var n = Math.max(1, Math.min(WARM_PARALLEL, total));
+    var workers = [];
+    for (var k = 0; k < n; k++) {
+      var w = _warmWorker || (_warmWorker = makeWarmWorker());
+      workers.push(w);
+    }
+    var p = Promise.all(workers.map(function (w) { return workerLoop(w); })).then(function () {
+      if (broken) {
+        _warmWorker = null;    /* a wedged engine must not be reused — recompile next run */
+        throw broken;
+      }
+      report();
+      return { done: done, skipped: skipped, failed: failed, total: total };
+    });
+    p.cancel = function () { stopped = true; };
+    return p;
+  }
+
   function storedList() {
     return piper.stored();
   }
@@ -1116,6 +1375,42 @@
     }).catch(function () { return 0; });
   }
 
+  /* Size of the persistent Supertonic word cache (OPFS only — the in-memory
+     LRU mirrors the same blobs). Resolves to { bytes, count } or zeros. */
+  function wordCacheStats() {
+    return wordDir().then(function (dir) {
+      if (!dir || !dir.values) return { bytes: 0, count: 0 };
+      var it = dir.values(), bytes = 0, count = 0;
+      function next() {
+        return it.next().then(function (r) {
+          if (r.done) return { bytes: bytes, count: count };
+          var f = r.value;
+          if (f && typeof f.name === 'string' &&
+              (f.name.indexOf('st-') === 0 || f.name.indexOf('st2-') === 0) &&
+              (f.name.slice(-5) === '.webm' || f.name.slice(-4) === '.ogg' || f.name.slice(-4) === '.wav')) {
+            count++;
+            return f.getFile().then(function (file) {
+              bytes += file.size;
+              return next();
+            }).catch(function () { return next(); });
+          }
+          return next();
+        });
+      }
+      return next().catch(function () { return { bytes: bytes, count: count }; });
+    }).catch(function () { return { bytes: 0, count: 0 }; });
+  }
+
+  /* Are all Supertonic model assets already in the OPFS cache? Lets the UI say
+     "model already downloaded" instead of implying a fresh 380 MB download. */
+  function modelCached() {
+    return Promise.all(ST_ASSETS.map(function (a) {
+      return supersonic.cacheGet(a[0]).then(function (buf) { return !!buf; });
+    })).then(function (flags) {
+      return flags.every(Boolean);
+    }).catch(function () { return false; });
+  }
+
   window.NeuralTTS = {
     engines: ENGINES,
     engineOrder: ENGINE_ORDER,
@@ -1123,8 +1418,11 @@
     speak: speak,
     stop: stop,
     prefetch: prefetch,
+    warmCache: warmCache,
     stored: storedList,
     clearWordCache: clearWordCache,
+    cacheStats: wordCacheStats,
+    modelCached: modelCached,
     _wordKey: wordKey,   /* exposed for tests: key stability (voice/text/rate/bitrate) */
     status: function () { return st; },
     onStatus: function (fn) {

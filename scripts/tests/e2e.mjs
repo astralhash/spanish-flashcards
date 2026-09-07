@@ -685,6 +685,52 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
   click(doc.querySelector('#settingsBtn'));
   await wait(30);
   ok(!doc.querySelector('#modal').hidden, 'settings modal opens (2nd)');
+
+  /* pre-heat UI present; hidden because the default HD voice is not Supertonic */
+  ok(!!doc.querySelector('#warmBtn') && !!doc.querySelector('#warmBox'), 'pre-heat button + box present in settings');
+  ok(doc.querySelector('#warmBox').hidden, 'pre-heat box hidden for a non-Supertonic voice');
+  ok(typeof window.NeuralTTS.warmCache === 'function', 'NeuralTTS.warmCache exposed');
+  ok(typeof window.NeuralTTS.cacheStats === 'function' && typeof window.NeuralTTS.clearWordCache === 'function',
+    'NeuralTTS.cacheStats + clearWordCache exposed');
+  ok(!!doc.querySelector('#cacheStats') && !!doc.querySelector('#clearCacheBtn'), 'cache size + clear-cache controls present');
+  ok(doc.querySelector('#clearCacheBtn').disabled === true, 'clear-cache disabled when the cache is empty');
+  ok(typeof window.NeuralTTS.modelCached === 'function' && !!doc.querySelector('#modelStatus'), 'model-cache check + status element present');
+  {
+    const cached = await window.NeuralTTS.modelCached();
+    ok(cached === false, 'modelCached resolves false without OPFS');
+  }
+  /* warmCache: an empty deck (Supertonic voice) resolves; a non-Supertonic voice rejects */
+  {
+    const emptyRes = await window.NeuralTTS.warmCache([], { voice: 'st-F1' });
+    ok(emptyRes && emptyRes.total === 0 && emptyRes.percent === 100, 'warmCache empty (Supertonic) resolves');
+    let rejected = false;
+    await window.NeuralTTS.warmCache(['hola'], { voice: 'kokoro-ef_dora' }).catch(() => { rejected = true; });
+    ok(rejected, 'warmCache rejects for a non-Supertonic voice');
+  }
+  /* warmCache circuit breaker: with the engine unusable (jsdom — no ort module,
+     no OPFS) the batch must ABORT with a clear error after
+     WARM_MAX_CONSEC_FAILS consecutive failures, not mass-fail the whole list
+     (the old code burned through every word and froze on an unsettled
+     promise). Six words: the 5th consecutive failure throws 'Warm stopped…'. */
+  {
+    let err = null, lastProg = null;
+    await window.NeuralTTS.warmCache(
+      ['hola', 'adiós', 'casa', 'perro', 'gato', 'luna'],
+      { voice: 'st-F1' },
+      (p) => { lastProg = p; }
+    ).then(() => { }, (e) => { err = e; });
+    ok(err && /Warm stopped/.test(err.message), 'warmCache aborts on consecutive engine failures: ' + (err && err.message));
+    ok(lastProg && lastProg.failed === 5 && lastProg.total === 6,
+      'breaker stops the list at the failure cap (failed=' + (lastProg && lastProg.failed) + ' of 6)');
+  }
+  /* cacheStats resolves (0 bytes/count in jsdom — no OPFS) and clearWordCache returns a count */
+  {
+    const st = await window.NeuralTTS.cacheStats();
+    ok(st && st.bytes === 0 && st.count === 0, 'cacheStats resolves to zeros without OPFS');
+    const n = await window.NeuralTTS.clearWordCache();
+    ok(typeof n === 'number' && n === 0, 'clearWordCache resolves to a count (0 here)');
+  }
+
   const ta = doc.querySelector('#importArea');
   ta.value = 'la estrella de mar | starfish | b1 | tiere\n["el casco urbano","city center","b2"]\n';
   click(doc.querySelector('#importBtn'));

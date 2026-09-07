@@ -1387,6 +1387,7 @@
     $('#setRate').value = ratePct;
     $('#setRateVal').textContent = ratePct + '%';
     updateHdStatus();
+    renderWarm();
   }
   function updateHdStatus() {
     var node = $('#hdStatus');
@@ -1433,6 +1434,145 @@
     settings.voiceURI = $('#setVoice').value || '';
     speakSystem(sample);
     settings.voiceURI = saved;
+  }
+
+  /* ---- pre-heat the Supertonic Opus word cache ---- */
+  /* A one-time background job that synthesizes every Spanish word with the
+     selected Supertonic voice and stores it, so later repeats play instantly
+     offline with no model load. Shows progress (bar + count) in settings. */
+  var warmJob = null;         /* in-flight warmCache promise (also carries .cancel) */
+  var warmProg = null;        /* latest { done, skipped, failed, total, percent } */
+  var warmCancelled = false;
+
+  /* every distinct Spanish word in the deck (built-ins + imports), deduped */
+  function warmWordList() {
+    var seen = {}, out = [];
+    var all = entries();
+    for (var i = 0; i < all.length; i++) {
+      var w = all[i].es;
+      if (!seen[w]) { seen[w] = true; out.push(w); }
+    }
+    return out;
+  }
+  /* the Opus word cache only exists for the Supertonic engine */
+  function warmEngineOk() {
+    return !!(window.NeuralTTS && NeuralTTS.voices[settings.hdVoice] &&
+      NeuralTTS.voices[settings.hdVoice].engine === 'supertonic');
+  }
+  function fmtBytes(n) {
+    if (!n) return '0 B';
+    if (n < 1048576) return (n / 1024).toFixed(0) + ' KB';
+    return (n / 1048576).toFixed(1) + ' MB';
+  }
+  function refreshCacheStats() {
+    if (!window.NeuralTTS || !window.NeuralTTS.cacheStats) return;
+    NeuralTTS.cacheStats().then(function (s) {
+      var node = $('#cacheStats');
+      if (node) node.textContent = 'Cached audio: ' + fmtBytes(s.bytes) + ' · ' + s.count + ' words';
+      var btn = $('#clearCacheBtn');
+      if (btn) btn.disabled = !s.count || !!warmJob;
+      /* show the resume progress only when the box is on screen (a Supertonic
+         voice is selected) — otherwise keep the bar out of the way */
+      var box = $('#warmBox');
+      if (box && box.hidden) return;
+      if (!warmJob && s.count > 0) {
+        var total = warmWordList().length;
+        if (total) {
+          var cached = Math.min(s.count, total);
+          $('#warmProgress').hidden = false;
+          $('#warmFill').style.width = Math.round(cached / total * 100) + '%';
+          $('#warmCount').textContent = cached + ' / ' + total + ' cached';
+        }
+      }
+    }).catch(function () {});
+    if (window.NeuralTTS.modelCached) {
+      NeuralTTS.modelCached().then(function (cached) {
+        var n = $('#modelStatus');
+        if (!n) return;
+        var s = window.NeuralTTS.status();
+        if (s && s.status === 'loading') {
+          n.textContent = '⤓ ' + (s.detail || 'loading Supertonic model…');
+        } else {
+          n.textContent = cached ? '✓ Supertonic model already downloaded' : '⤓ Model downloads on the first run, then stays cached';
+        }
+      }).catch(function () {});
+    }
+  }
+  function renderWarm() {
+    var box = $('#warmBox'), btn = $('#warmBtn');
+    if (!box || !btn) return;
+    var ok = !!settings.hd && warmEngineOk();
+    box.hidden = !ok;
+    refreshCacheStats();
+    if (!ok) return;
+    var running = !!warmJob;
+    btn.disabled = running;
+    $('#warmCancel').hidden = !running;
+    var prog = $('#warmProgress');
+    if (warmProg && warmProg.total) {
+      prog.hidden = false;
+      $('#warmFill').style.width = (warmProg.percent || 0) + '%';
+      $('#warmCount').textContent = (warmProg.done + warmProg.skipped) + ' / ' + warmProg.total + ' cached';
+    } else {
+      prog.hidden = true;
+    }
+  }
+  function startWarm() {
+    if (!window.NeuralTTS || !window.NeuralTTS.warmCache) return;
+    if (warmJob) return;
+    var words = warmWordList();
+    if (!words.length) { toast('No words to warm'); return; }
+    warmCancelled = false;
+    warmProg = { done: 0, skipped: 0, failed: 0, total: words.length, percent: 0 };
+    $('#warmBtn').disabled = true;
+    $('#warmCancel').hidden = false;
+    $('#warmProgress').hidden = false;
+    $('#warmFill').style.width = '0%';
+    $('#warmCount').textContent = '0 / ' + words.length + ' cached';
+    $('#warmMsg').textContent = 'warming…';
+    warmJob = NeuralTTS.warmCache(words, { voice: settings.hdVoice, rate: settings.rate }, function (p) {
+      warmProg = p;
+      $('#warmFill').style.width = (p.percent || 0) + '%';
+      $('#warmCount').textContent = (p.done + p.skipped) + ' / ' + p.total + ' cached';
+      var left = p.total - (p.done + p.skipped + p.failed);
+      $('#warmMsg').textContent = left > 0 ? 'warming… ' + left + ' remaining' : '';
+    }).then(function () {
+      warmJob = null;
+      var prog = warmProg || { done: 0, skipped: 0, failed: 0, total: words.length };
+      if (warmCancelled) {
+        $('#warmMsg').textContent = 'Stopped — ' + (prog.done + prog.skipped) + ' / ' + prog.total + ' cached';
+      } else {
+        $('#warmMsg').textContent = prog.failed
+          ? '✓ cached ' + (prog.done + prog.skipped) + ' words · ' + prog.failed + ' failed'
+          : '✓ all ' + prog.total + ' words cached';
+      }
+      renderWarm();
+      if (!warmCancelled) toast('Word audio cache warmed');
+    }).catch(function (err) {
+      warmJob = null;
+      renderWarm();
+      $('#warmMsg').textContent = '⚠ ' + ((err && err.message) || err);
+    });
+  }
+  function cancelWarm() {
+    if (!warmJob) return;
+    warmCancelled = true;
+    if (warmJob.cancel) warmJob.cancel();
+    $('#warmCancel').hidden = true;
+    $('#warmMsg').textContent = 'Stopping after the current word…';
+  }
+  function clearCache() {
+    if (!window.NeuralTTS || !window.NeuralTTS.clearWordCache) return;
+    if (warmJob) return;   /* don't wipe a cache a warm run is writing to */
+    if (!confirm('Delete every cached word audio (all voices)?')) return;
+    NeuralTTS.clearWordCache().then(function (n) {
+      warmProg = null;                     /* cache is gone — reset the warm progress */
+      $('#warmProgress').hidden = true;
+      $('#warmFill').style.width = '0%';
+      $('#warmMsg').textContent = 'Cleared ' + n + ' cached word(s)';
+      renderWarm();
+      toast('Word audio cache cleared');
+    }).catch(function () {});
   }
 
   function doImport() {
@@ -1623,6 +1763,7 @@
       saveSettings();
       $('#hdVoiceRow').hidden = !settings.hd;
       updateHdStatus();
+      renderWarm();
       if (settings.hd && window.NeuralTTS && NeuralTTS.status().status === 'idle') {
         /* warm up the chosen model in the background so the first 🔊 is quick */
         NeuralTTS.prefetch(settings.hdVoice).catch(function () { updateHdStatus(); });
@@ -1635,14 +1776,19 @@
       fillHdVoices(settings.hdEngine);
       settings.hdVoice = $('#setHdVoice').value;
       saveSettings();
+      renderWarm();
       previewVoice();           /* hear the default voice of the new model */
     });
     $('#setHdVoice').addEventListener('change', function () {
       settings.hdVoice = $('#setHdVoice').value;
       saveSettings();
       if (window.NeuralTTS) NeuralTTS.stop();
+      renderWarm();
       previewVoice();           /* hear the newly picked HD voice */
     });
+    $('#warmBtn').addEventListener('click', function () { this.blur(); startWarm(); });
+    $('#warmCancel').addEventListener('click', function () { this.blur(); cancelWarm(); });
+    $('#clearCacheBtn').addEventListener('click', function () { this.blur(); clearCache(); });
     $('#importBtn').addEventListener('click', doImport);
     $('#resetProgress').addEventListener('click', function () {
       if (!confirm('Reset all learning progress? Imported words stay.')) return;
