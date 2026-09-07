@@ -166,6 +166,7 @@
   var DEFAULT_VOICE = 'kokoro-ef_dora';
 
   var seq = 0;                 /* play token: stale syntheses are not played */
+  var lastSpeak = 0;           /* token of the newest issued speak (status ownership) */
   var audio = null;            /* current HTMLAudioElement */
   var blobUrl = null;
   var listeners = [];
@@ -198,6 +199,10 @@
     audio = null;
     if (blobUrl) { try { URL.revokeObjectURL(blobUrl); } catch (e) {} blobUrl = null; }
     if (had && !quiet) emitAudio({ type: 'stop', audio: null });
+    /* Advancing / toggling means pending narration is no longer wanted: the
+       play token goes stale. A Supertonic first-use generation still finishes
+       (and caches the word), but the sample is never played for it. */
+    if (!quiet) seq++;
   }
 
   function play(blob, rate) {
@@ -631,83 +636,120 @@
       }
       var fromDisk = keyPre ? wordCacheGet(keyPre) : Promise.resolve(null);
       return fromDisk.then(function (hit) {
-        if (hit && mySeq === seq) {
-          wordMemPut(keyPre, hit);
-          return play(hit, 0).then(function () {
-            if (mySeq === seq && st.status !== 'error') setStatus('ready', '');
-          }).catch(function (err) {
-            return fail(mySeq, err, 'supertonic TTS');
-          }).then(function () { return 'cached'; });
-        }
-        return null;
+        if (!hit) return null;
+        if (mySeq !== seq) return 'cached';   /* learner moved on: it is on disk already, no play */
+        wordMemPut(keyPre, hit);
+        return play(hit, 0).then(function () {
+          if (mySeq === seq && st.status !== 'error') setStatus('ready', '');
+        }).catch(function (err) {
+          return fail(mySeq, err, 'supertonic TTS');
+        }).then(function () { return 'cached'; });
       }).then(function (done) {
         if (done) return done;
-        setStatus('loading', 'loading Supertonic voice model…');
-        return self.ensure().then(function () {
-          if (mySeq !== seq) return null;
-          return self.style(meta.voice);
-        });
-      }).then(function (style) {
-        if (!style || style === 'cached') return style;
-        if (mySeq !== seq) return null;
-        setStatus('loading', 'synthesizing…');
-        var ort = self.ort;
-        var t = tPre || self.prep(text);
-        var speed = speedPre;
-        var tIds = self.ids(t);
-        var total = new ort.Tensor('float32', new Float32Array([ST_STEPS]), [1]);
-        var duration = null;   /* filled by the duration predictor, read below */
-        return self.dp.run({ text_ids: tIds.textIds, style_dp: style.dp, text_mask: tIds.textMask }).then(function (o) {
-          duration = Array.from(o.duration.data);
-          for (var i = 0; i < duration.length; i++) duration[i] /= speed;
-          return self.te.run({ text_ids: tIds.textIds, style_ttl: style.ttl, text_mask: tIds.textMask });
-        }).then(function (o) {
-          var textEmb = o.text_emb;
-          var cfg = self.cfgs, sampleRate = cfg.ae.sample_rate;
-          var chunkSize = cfg.ae.base_chunk_size * cfg.ttl.chunk_compress_factor;
-          var latentLen = Math.floor((Math.floor(duration[0] * sampleRate) + chunkSize - 1) / chunkSize);
-          var latentDim = cfg.ttl.latent_dim * cfg.ttl.chunk_compress_factor;
-          var xt = new Float32Array(latentDim * latentLen);
-          for (var i = 0; i < xt.length; i += 2) {
-            var u1 = Math.max(0.0001, Math.random()), u2 = Math.random();
-            var g = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-            xt[i] = g;
-            if (i + 1 < xt.length) xt[i + 1] = Math.sqrt(-2 * Math.log(u1)) * Math.sin(2 * Math.PI * u2);
-          }
-          var wavLen = Math.floor(duration[0] * sampleRate);
-          var maskLen = Math.floor((wavLen + chunkSize - 1) / chunkSize);
-          var latentMask = new Float32Array(latentLen);
-          for (i = 0; i < latentLen; i++) latentMask[i] = i < maskLen ? 1 : 0;
-          for (i = 0; i < xt.length; i++) xt[i] *= latentMask[i % latentLen];
-          var latentMaskT = new ort.Tensor('float32', latentMask, [1, 1, latentLen]);
-          var cur = 0;
-          function step() {
-            if (mySeq !== seq) return null;
-            var xtT = new ort.Tensor('float32', xt, [1, latentDim, latentLen]);
-            return self.ve.run({
-              noisy_latent: xtT, text_emb: textEmb, style_ttl: style.ttl,
-              latent_mask: latentMaskT, text_mask: tIds.textMask,
-              current_step: new ort.Tensor('float32', new Float32Array([cur]), [1]),
-              total_step: total
-            }).then(function (o) {
-              xt = new Float32Array(o.denoised_latent.data);
-              cur++;
-              if (cur < ST_STEPS) return step();
-              return new ort.Tensor('float32', xt, [1, latentDim, latentLen]);
+        /* Join an in-flight generation of the SAME word (e.g. 🔊 re-clicked
+           while a detached attempt still runs) instead of synthesizing twice. */
+        var twin = (keyPre && pendingGen && pendingGen.key === keyPre) ? pendingGen.p : null;
+        if (twin) {
+          return twin.then(function (blob) {
+            if (mySeq !== seq || !blob) return null;
+            return play(blob, 0).then(function () {
+              if (mySeq === seq && st.status !== 'error') setStatus('ready', '');
             });
-          }
-          return step();
-        }).then(function (latent) {
-          if (mySeq !== seq) return null;
-          return self.voc.run({ latent: latent });
-        }).then(function (o) {
-          if (mySeq !== seq || !o) return null;
-          var wav = new Float32Array(o.wav_tts.data);
-          var sr = self.cfgs.ae.sample_rate;
-          var blob = wavBlob(wav, sr);   /* first use plays the WAV right away… */
-          if (keyPre) wordCacheStore(keyPre, wav, sr, blob);   /* …while Opus is encoded in the background */
-          return play(blob, 0);   /* native speed already applied */
+          }).catch(function (err) {
+            return fail(mySeq, err, 'supertonic TTS');
+          });
+        }
+        /* First use. The generation is never aborted: if the learner has
+           already moved on (stop() advanced the play token), the serialized
+           queue is released at the next stage boundary and the remainder
+           detaches — still synthesizing and caching the word, but the sample
+           is never played for a stale token. */
+        var release = null;   /* resolves the serialized queue slot early */
+        var gate = new Promise(function (r) { release = r; });
+        var releaseOnce = function () { if (release) { var f = release; release = null; f(); } };
+        var releaseIfStale = function () { if (mySeq !== seq) releaseOnce(); };
+        setStatus('loading', 'loading Supertonic voice model…');
+        var gen = self.ensure().then(function () {
+          releaseIfStale();
+          return self.style(meta.voice);
+        }).then(function (style) {
+          if (!style) return null;
+          if (mySeq === seq) setStatus('loading', 'synthesizing…');
+          releaseIfStale();
+          var ort = self.ort;
+          var t = tPre || self.prep(text);
+          var speed = speedPre;
+          var tIds = self.ids(t);
+          var total = new ort.Tensor('float32', new Float32Array([ST_STEPS]), [1]);
+          var duration = null;   /* filled by the duration predictor, read below */
+          return self.dp.run({ text_ids: tIds.textIds, style_dp: style.dp, text_mask: tIds.textMask }).then(function (o) {
+            duration = Array.from(o.duration.data);
+            for (var i = 0; i < duration.length; i++) duration[i] /= speed;
+            return self.te.run({ text_ids: tIds.textIds, style_ttl: style.ttl, text_mask: tIds.textMask });
+          }).then(function (o) {
+            var textEmb = o.text_emb;
+            var cfg = self.cfgs, sampleRate = cfg.ae.sample_rate;
+            var chunkSize = cfg.ae.base_chunk_size * cfg.ttl.chunk_compress_factor;
+            var latentLen = Math.floor((Math.floor(duration[0] * sampleRate) + chunkSize - 1) / chunkSize);
+            var latentDim = cfg.ttl.latent_dim * cfg.ttl.chunk_compress_factor;
+            var xt = new Float32Array(latentDim * latentLen);
+            for (var i = 0; i < xt.length; i += 2) {
+              var u1 = Math.max(0.0001, Math.random()), u2 = Math.random();
+              var g = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+              xt[i] = g;
+              if (i + 1 < xt.length) xt[i + 1] = Math.sqrt(-2 * Math.log(u1)) * Math.sin(2 * Math.PI * u2);
+            }
+            var wavLen = Math.floor(duration[0] * sampleRate);
+            var maskLen = Math.floor((wavLen + chunkSize - 1) / chunkSize);
+            var latentMask = new Float32Array(latentLen);
+            for (i = 0; i < latentLen; i++) latentMask[i] = i < maskLen ? 1 : 0;
+            for (i = 0; i < xt.length; i++) xt[i] *= latentMask[i % latentLen];
+            var latentMaskT = new ort.Tensor('float32', latentMask, [1, 1, latentLen]);
+            var cur = 0;
+            function step() {
+              var xtT = new ort.Tensor('float32', xt, [1, latentDim, latentLen]);
+              return self.ve.run({
+                noisy_latent: xtT, text_emb: textEmb, style_ttl: style.ttl,
+                latent_mask: latentMaskT, text_mask: tIds.textMask,
+                current_step: new ort.Tensor('float32', new Float32Array([cur]), [1]),
+                total_step: total
+              }).then(function (o) {
+                xt = new Float32Array(o.denoised_latent.data);
+                cur++;
+                releaseIfStale();   /* stale → unblock the next speak; keep generating */
+                if (cur < ST_STEPS) return step();
+                return new ort.Tensor('float32', xt, [1, latentDim, latentLen]);
+              });
+            }
+            return step();
+          }).then(function (latent) {
+            return self.voc.run({ latent: latent });
+          }).then(function (o) {
+            if (!o) return null;
+            var wav = new Float32Array(o.wav_tts.data);
+            var sr = self.cfgs.ae.sample_rate;
+            var blob = wavBlob(wav, sr);   /* first use plays the WAV right away… */
+            if (keyPre) wordCacheStore(keyPre, wav, sr, blob);   /* …while Opus is encoded in the background */
+            if (mySeq !== seq) return null;   /* learner moved on: cached, never played */
+            return play(blob, 0);   /* native speed already applied */
+          });
         });
+        if (keyPre) {
+          pendingGen = { key: keyPre, p: gen };   /* re-clicks join this instead of re-synthesizing */
+          var clearPending = function () { if (pendingGen && pendingGen.key === keyPre) pendingGen = null; };
+          gen.then(clearPending, clearPending);
+        }
+        gen.then(function () {
+          if (mySeq === seq) {
+            if (st.status !== 'error') setStatus('ready', '');
+          } else if (lastSpeak === mySeq) {
+            setStatus('ready', '');   /* stale finish, no newer speak: calm the orb */
+          }
+        }).catch(function (err) {
+          if (mySeq === seq) return fail(mySeq, err, 'supertonic TTS');
+          console.warn('[vocabes] background Supertonic generation failed:', err);   /* best-effort */
+        }).then(releaseOnce, releaseOnce);
+        return gate;
       }).then(function () {
         if (mySeq === seq && st.status !== 'error') setStatus('ready', '');
       }).catch(function (err) {
@@ -759,15 +801,23 @@
 
   /* ================= Supertonic word cache (Opus in OPFS) =================
    * First use of a word synthesizes, plays the WAV immediately, and encodes
-   * Opus (32 kbps webm/ogg via MediaRecorder) in the background for next
+   * Opus (48 kbps webm/ogg via MediaRecorder) in the background for next
    * time. Repeats play the cached blob instantly — no model load, no
-   * inference. Key covers voice + preprocessed text + rate, so a settings
-   * change naturally misses the cache. Chrome + Firefox encode AND decode;
+   * inference. Key covers voice + preprocessed text + rate + bitrate, so a
+   * settings (or bitrate) change naturally misses the cache. Chrome +
+   * Firefox encode AND decode;
    * Safari has no supported Opus-encode path here and falls back to
    * re-synthesizing (WAV fallback is stored so a future decode-capable pass
-   * can still hit). Everything is best-effort: any failure resolves null and
+   * can still hit). If the play token goes stale mid-generation (the learner
+   * moved on), the job queue is released at the next stage boundary and the
+   * generation finishes detached — the word is still cached, never played.
+   * Everything is best-effort: any failure resolves null and
    * the caller synthesizes as if uncached. */
+  var WORD_KBPS = 48;   /* Opus encode bitrate; baked into the key so a bump
+                           re-keys the cache instead of replaying old blobs */
   var WORD_MEM_MAX = 300;
+  var pendingGen = null;   /* { key, p } in-flight first-use generation: a
+                              re-click joins it instead of synthesizing twice */
   var wordMem = new Map();   /* key -> Blob (this session; no OPFS round-trip) */
   function wordMemGet(key) {
     if (!key || !wordMem.has(key)) return null;
@@ -800,7 +850,25 @@
   }
   function wordKey(voice, preppedText, speed) {
     var rate = Number(speed).toFixed(2);
-    return 'st-' + String(voice) + '-' + wordHash(String(voice) + '\x00' + String(preppedText) + '\x00' + rate);
+    return 'st2-' + String(voice) + '-' + wordHash(String(voice) + '\x00' + String(preppedText) + '\x00' + rate + '\x00' + WORD_KBPS);
+  }
+  /* Legacy sweep: pre-48k blobs ('st-' keys) can never be hit again — delete
+     them on first OPFS access so they don't linger. Best-effort, never rejects. */
+  function sweepLegacyWords(dir) {
+    if (!dir || !dir.values) return;
+    var it = dir.values();
+    function next() {
+      return it.next().then(function (r) {
+        if (r.done) return;
+        var name = r.value && r.value.name;
+        if (name && name.indexOf('st-') === 0 &&
+            (name.slice(-5) === '.webm' || name.slice(-4) === '.ogg' || name.slice(-4) === '.wav')) {
+          return dir.removeEntry(name).catch(function () {}).then(next);
+        }
+        return next();
+      });
+    }
+    next().catch(function () {});
   }
   var _wdir;   /* OPFS 'tts-cache' dir handle, or null when unavailable */
   function wordDir() {
@@ -810,6 +878,7 @@
         return root.getDirectoryHandle('tts-cache', { create: true });
       }).then(function (dir) {
         _wdir = dir;
+        sweepLegacyWords(dir);
         return dir;
       }).catch(function () {
         _wdir = null;
@@ -889,7 +958,7 @@
           src.connect(dest);
           var rec;
           try {
-            rec = new MediaRecorder(dest.stream, { mimeType: mime, audioBitsPerSecond: 32000 });
+            rec = new MediaRecorder(dest.stream, { mimeType: mime, audioBitsPerSecond: WORD_KBPS * 1000 });
           } catch (e) { return done(null); }
           var chunks = [];
           rec.ondataavailable = function (ev) { if (ev.data && ev.data.size) chunks.push(ev.data); };
@@ -1006,6 +1075,7 @@
     opts = opts || {};
     var meta = VOICES[opts.voice] || VOICES[DEFAULT_VOICE];
     var mySeq = ++seq;
+    lastSpeak = mySeq;
     return enqueue(function () {
       if (mySeq !== seq) return null;        /* superseded while queued */
       return engineOf(meta).speak(text, meta, opts, mySeq);
@@ -1034,7 +1104,7 @@
         return it.next().then(function (r) {
           if (r.done) return n;
           var name = r.value && r.value.name;
-          if (name && name.indexOf('st-') === 0 &&
+          if (name && (name.indexOf('st-') === 0 || name.indexOf('st2-') === 0) &&
               (name.slice(-5) === '.webm' || name.slice(-4) === '.ogg' || name.slice(-4) === '.wav')) {
             n++;
             return dir.removeEntry(name).catch(function () {}).then(next);
@@ -1055,7 +1125,7 @@
     prefetch: prefetch,
     stored: storedList,
     clearWordCache: clearWordCache,
-    _wordKey: wordKey,   /* exposed for tests: key stability (voice/text/rate) */
+    _wordKey: wordKey,   /* exposed for tests: key stability (voice/text/rate/bitrate) */
     status: function () { return st; },
     onStatus: function (fn) {
       listeners.push(fn);

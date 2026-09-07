@@ -153,6 +153,12 @@ Settings renders a two-step picker: HD model dropdown (`#setHdEngine`,
 `settings.hdVoice`); stored settings from before `hdEngine` existed backfill
 it from the voice. One serialized job queue (`enqueue`); every
 speak carries a `seq` token and stale results are dropped, never played.
+`stop()` — the app's `stopSpeech()` on card render, plus the settings
+switches — also bumps the token: narration the learner walked away from never
+plays. A stale **Supertonic first-use** generation is not aborted: it releases
+the queue at the next stage boundary and finishes detached (a re-click on the
+same word joins it via a pending-generation registry instead of synthesizing
+twice), still caching the word, just without the play.
 Failures degrade to silence (HD-or-silence policy in `speak()` in app.js).
 HD is strictly opt-in (`settings.hd: false` default).
 
@@ -200,20 +206,25 @@ so its words are cached on first use; **repeats play instantly with no model
 load and no inference**. Kokoro/Piper synthesize directly (no cache).
 
 - **First use**: synthesize → play the WAV immediately (no added latency) →
-  encode Opus in the background (`MediaRecorder`, 32 kbps, `webm;codecs=opus`
+  encode Opus in the background (`MediaRecorder`, 48 kbps, `webm;codecs=opus`
   preferred, `ogg;codecs=opus` fallback) → store in OPFS (`tts-cache` dir, a
   separate dir from the `supertonic` model assets) + in-memory LRU (300 blobs).
+  If the learner advances before the generation finishes (play token stale),
+  the sample is **not** played when it lands — but the word is still cached.
 - **Repeat**: memory → OPFS (`.webm`/`.ogg` preferred, `.wav` fallback) →
   `play(blob)` straight away. The cache check runs **before** `ensure()`, so a
   repeat skips the ~380 MB model path entirely, even after a reload.
 - **Key** (`wordKey`, exposed as `NeuralTTS._wordKey` for tests):
-  `st-<voice>-<cyrb53(voice + prep(text) + rate)>` — prepped text (the same
-  `<es>…</es>` string inference sees) + voice + rate clamped to 0.7–2.0
-  (`toFixed(2)`). A voice or speed change naturally misses the cache.
+  `st2-<voice>-<cyrb53(voice + prep(text) + rate + bitrate)>` — prepped text
+  (the same `<es>…</es>` string inference sees) + voice + rate clamped to
+  0.7–2.0 (`toFixed(2)`) + the encode bitrate (`WORD_KBPS`). A voice, speed or
+  bitrate change naturally misses the cache.
 - **Sizes**: ~4–8 KB/word Opus vs ~88 KB/s WAV (44.1 kHz mono 16-bit); the
   whole deck is ~10–20 MB per voice. No eviction yet (no quota pressure at
-  that size); `clearWordCache()` drops memory + all `st-*` audio files and
+  that size); `clearWordCache()` drops memory + all cached audio files and
   resolves the deleted count (no Settings UI wired — call it from console).
+  Pre-bitrate-bump blobs (`st-` prefix, ≤32 kbps) are swept from OPFS once on
+  load (`sweepLegacyWords`) — they can never be replayed.
 - **Fallbacks**: no Opus encoder (Safari, jsdom) → the WAV is stored instead
   (still instant, just larger); no OPFS (`file://`) → memory-only; **every
   failure resolves null and the caller synthesizes as if uncached** — caching
