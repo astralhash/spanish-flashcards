@@ -20,16 +20,19 @@ If `node` isn't on PATH, use `/opt/homebrew/bin/node`.
 - Every file is a JSON array of rows: `["spanish","english","level","cluster?"]`.
 - `level` ∈ `b1 | b2 | c1 | c2`. Build targets: **b1 800 · b2 600 · c1 400 · c2 200**
   (counts below target → build exits 1; exceeding is fine).
-- `cluster` ∈ `wochentage, monate, zahlen, farben, familie, essen, koerper, tiere, expresiones, jerga, cine`
-  (only for entries belonging to a challenge word group).
+- `cluster` ∈ `wochentage, monate, zahlen, farben, familie, essen, koerper,
+  tiere, expresiones, jerga, cine, casa, ropa, clima, trabajo, viajes, deportes,
+  escuela, salud, tecnologia, ocio` (Core.CLUSTERS order; only for entries
+  belonging to a challenge word group).
 - **Merge order = lexical filename order**, and **the first occurrence of a
   Spanish word wins**: `vocab-b1a < vocab-b1b < vocab-b2 < vocab-c1 < vocab-c2
-  < vocab-freq-* < zz-topup`. Name new files so the intended priority holds.
+  < vocab-cluster-* < vocab-freq-* < zz-topup`. Name new files so the intended priority holds.
 - Dedupe key is the full `es` string, lowercased — `el tiempo` vs `tiempo` are
   different cards; `como` and `cómo` are different words.
-- `vocab-freq-*` files hold the frequency-grounded additions (top band = B1).
-  The core files (`vocab-b1a…vocab-c2`) are the original themed sets; keep them
-  untouched unless fixing an error in them.
+- `vocab-freq-*` files hold the frequency-grounded additions across all bands
+  (`freq-b1a…freq-c2`, plus `freq-gaps` for leftovers); `vocab-cluster-*` files
+  hold themed challenge-group words. The core files (`vocab-b1a…vocab-c2`) are
+  the original themed sets; keep them untouched unless fixing an error in them.
 - Rows that duplicate an earlier file are reported as PROBLEMS but silently
   dropped — the totals already account for that.
 
@@ -143,12 +146,15 @@ to hit round totals — exceeding targets is fine.
 
 `window.NeuralTTS` exposes three lazily-imported engines behind one interface:
 `speak(text, {voice, rate})` · `stop()` · `prefetch(id, cb)` · `status()` ·
-`onStatus(fn)` · `voices` (`{id -> {engine, voice, group, label}}`, rendered
-as `<optgroup>`s in Settings). One serialized job queue (`enqueue`); every
+`onStatus(fn)` · `onAudio(fn)` · `clearWordCache()` · `voices`
+(`{id -> {engine, voice, group, label}}`) · `engines` + `engineOrder`.
+Settings renders a two-step picker: HD model dropdown (`#setHdEngine`,
+`settings.hdEngine`) then the voices of that model (`#setHdVoice`,
+`settings.hdVoice`); stored settings from before `hdEngine` existed backfill
+it from the voice. One serialized job queue (`enqueue`); every
 speak carries a `seq` token and stale results are dropped, never played.
 Failures degrade to silence (HD-or-silence policy in `speak()` in app.js).
-HD is strictly opt-in (`settings.hd: false` default); `hdVoice` only picks
-which voice is pre-selected when the user enables it.
+HD is strictly opt-in (`settings.hd: false` default).
 
 - **Kokoro-82M** (`kokoro-js@1.2.1` from jsDelivr `+esm`, model
   `onnx-community/Kokoro-82M-v1.0-ONNX`, dtype `q8` / device `wasm`, ~90 MB
@@ -186,6 +192,56 @@ test scripts. Verify a new engine end-to-end in headless Chrome against the
 real `src/tts.js` (drive `NeuralTTS.speak` with a stubbed `Audio`) before
 claiming it works — the Kokoro `phonemizer`-only-speaks-English and the
 Supertonic `bufs`-vs-`byName` bugs both escaped unit tests.
+
+## Supertonic word cache (Opus in OPFS, src/tts.js)
+
+Supertonic inference is slow (8-step flow loop, minutes to compile on WASM),
+so its words are cached on first use; **repeats play instantly with no model
+load and no inference**. Kokoro/Piper synthesize directly (no cache).
+
+- **First use**: synthesize → play the WAV immediately (no added latency) →
+  encode Opus in the background (`MediaRecorder`, 32 kbps, `webm;codecs=opus`
+  preferred, `ogg;codecs=opus` fallback) → store in OPFS (`tts-cache` dir, a
+  separate dir from the `supertonic` model assets) + in-memory LRU (300 blobs).
+- **Repeat**: memory → OPFS (`.webm`/`.ogg` preferred, `.wav` fallback) →
+  `play(blob)` straight away. The cache check runs **before** `ensure()`, so a
+  repeat skips the ~380 MB model path entirely, even after a reload.
+- **Key** (`wordKey`, exposed as `NeuralTTS._wordKey` for tests):
+  `st-<voice>-<cyrb53(voice + prep(text) + rate)>` — prepped text (the same
+  `<es>…</es>` string inference sees) + voice + rate clamped to 0.7–2.0
+  (`toFixed(2)`). A voice or speed change naturally misses the cache.
+- **Sizes**: ~4–8 KB/word Opus vs ~88 KB/s WAV (44.1 kHz mono 16-bit); the
+  whole deck is ~10–20 MB per voice. No eviction yet (no quota pressure at
+  that size); `clearWordCache()` drops memory + all `st-*` audio files and
+  resolves the deleted count (no Settings UI wired — call it from console).
+- **Fallbacks**: no Opus encoder (Safari, jsdom) → the WAV is stored instead
+  (still instant, just larger); no OPFS (`file://`) → memory-only; **every
+  failure resolves null and the caller synthesizes as if uncached** — caching
+  never rejects a `speak()`.
+- Opus decode in Safari was partial until macOS 15.4 / iOS 18.4 — Chrome and
+  Firefox encode AND decode; Safari re-synthesizes. Accepted trade-off.
+
+## Voice activity orb (src/app.js, src/style.css, src/template.html)
+
+One `#voiceOrb` element morphs spinner → orb: a flowing conic-arc spinner
+(`vspin` + `vglow`) while the HD voice generates (`status() === 'loading'`
+and nothing playing), then an orb that scales with the live RMS level while
+audible. It docks bottom-center of the active card (challenge card, else the
+open quiz panel — `voicePlace()` moves it; all four containers are positioned
+ancestors, the orb is a click-through overlay so layout and buttons are
+unaffected) and falls back to the header when no card is visible.
+
+- HD amplitude comes from a WebAudio tap: `MediaElementSource(audio) →
+  Analyser → destination` on the live element. Fresh element per `play()`, so
+  one-source-per-element is always legal; blob: URLs are same-origin so levels
+  are real. System voices have no audio tap → gentle CSS pulse instead;
+  `prefers-reduced-motion` → static orb.
+- `tts.js` contract (added for this, status values unchanged so `ttsBusy()` /
+  `advanceAfterSpeech()` are unaffected): `onAudio(fn)` emits
+  `{type: 'play'|'ended'|'stop', audio}` — `'play'` fires on the element's
+  `playing` event and carries it for visualisation; `stop()` emits `'stop'`
+  only when audio actually existed (internal calls pass quiet). e2e asserts
+  the orb exists and starts hidden.
 
 ## Do / Don't
 
