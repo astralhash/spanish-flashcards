@@ -632,6 +632,10 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
 /* ============ motion / misc ============ */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
+  /* exception: voice feedback is essential "working/speaking" state — keep the
+     generation spinner turning and the orb pulsing (slower, gentler) */
+  .voice-orb.spin { animation: vspin 1.2s linear infinite !important; }
+  .voice-orb.orb.pulse { animation: vpulse 1.7s ease-in-out infinite !important; }
 }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; }

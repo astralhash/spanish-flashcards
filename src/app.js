@@ -352,10 +352,6 @@
   var voiceOrb = null, voiceLoading = false, hdPlaying = false, sysSpeaking = false;
   var voiceAC = null, voiceAn = null, voiceSrc = null, voiceBuf = null, voiceRaf = 0;
   function orbEl() { if (!voiceOrb) voiceOrb = $('#voiceOrb'); return voiceOrb; }
-  function voiceReduced() {
-    try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
-    catch (e) { return false; }
-  }
   function voiceAnalyserStop() {
     if (voiceRaf) { try { cancelAnimationFrame(voiceRaf); } catch (e) {} voiceRaf = 0; }
     if (voiceSrc) { try { voiceSrc.disconnect(); } catch (e) {} voiceSrc = null; }
@@ -427,7 +423,7 @@
      play(), so one source per element is always legal. */
   function voiceAttach(a) {
     voiceAnalyserStop();
-    if (!a || voiceReduced()) return false;
+    if (!a) return false;
     try {
       var AC = window.AudioContext || window.webkitAudioContext;
       if (!AC || typeof requestAnimationFrame !== 'function') return false;
