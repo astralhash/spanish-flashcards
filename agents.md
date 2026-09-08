@@ -214,9 +214,11 @@ HD is strictly opt-in (`settings.hd: false` default).
   dims. Any tensor reused across two runs (or any model buffer reused across
   two creates) dies as a detached buffer — Firefox fails with "attempting to
   access detached ArrayBuffer".
-- **Piper** (`@diffusionstudio/vits-web`, ONNX WASM, per-voice 20–110 MB,
-  22 kHz, cached in OPFS). The ONLY genuinely peninsular tier (`es_ES`
-  voices). Kept as the lightweight fallback.
+- **Piper** (`@diffusionstudio/vits-web@1.0.3` — latest npm release; ONNX WASM,
+  per-voice 27–77 MB, 16–22 kHz, cached in OPFS). The ONLY genuinely
+  peninsular tier (`es_ES` voices — davefx/sharvard medium, carlfm x_low;
+  the two MLS low voices of the Piper catalog are deliberately omitted:
+  auditioned and rejected as terrible). Kept as the lightweight fallback.
 
 To add a voice: one entry in `VOICES` (`engine` + engine-native `voice` id +
 honest `group`/`label` covering accent, quality and size); Piper ids are

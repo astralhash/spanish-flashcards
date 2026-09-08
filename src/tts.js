@@ -22,8 +22,9 @@
  *
  *   • Piper (VITS via @diffusionstudio/vits-web, ONNX Runtime WASM) — the
  *     lightweight fallback and the ONLY genuinely peninsular-accented tier:
- *     smaller per-voice downloads (20–110 MB), 22 kHz, more robotic. Cached
- *     in OPFS.
+ *     smaller per-voice downloads (27–77 MB), 16–22 kHz, more robotic. Cached
+ *     in OPFS. Three es_ES voices of the current Piper catalog (the two MLS
+ *     low voices are deliberately omitted — auditioned and rejected).
  *
  * Both work fully offline after their first download. Failure paths degrade
  * to silence: when the HD voice is selected, app.js stays quiet rather than
@@ -72,7 +73,7 @@
     },
     piper: {
       label: 'Piper',
-      desc: 'authentic Spain-accented voices · 22 kHz · more robotic · 20–110 MB per voice'
+      desc: 'authentic Spain-accented voices · 16–22 kHz · more robotic · 27–77 MB per voice'
     }
   };
   var ENGINE_ORDER = ['kokoro', 'supertonic', 'piper'];
@@ -150,17 +151,17 @@
     'es_ES-sharvard-medium': {
       engine: 'piper', voice: 'es_ES-sharvard-medium',
       group: 'Piper es-ES — authentic Spain (castellano) accent · 22 kHz · more robotic',
-      label: 'Sharvard · female es-ES — authentic Spain accent, decent · ~63 MB'
+      label: 'Sharvard · male es-ES — authentic Spain accent, decent · ~77 MB'
+    },
+    'es_ES-carlfm-x_low': {
+      engine: 'piper', voice: 'es_ES-carlfm-x_low',
+      group: 'Piper es-ES — authentic Spain (castellano) accent · 16 kHz · more robotic',
+      label: 'Carl FM · male es-ES — Spain accent, tiny & fastest, very robotic · ~27 MB'
     },
     'es_MX-claude-high': {
       engine: 'piper', voice: 'es_MX-claude-high',
       group: 'Piper es-MX — Mexican accent · 22 kHz · more robotic',
-      label: 'Claude · male es-MX — best Piper quality, Mexican accent · ~110 MB'
-    },
-    'es_ES-carlfm-x_low': {
-      engine: 'piper', voice: 'es_ES-carlfm-x_low',
-      group: 'Piper es-ES — authentic Spain (castellano) accent · 22 kHz · more robotic',
-      label: 'Carl FM · male es-ES — Spain accent, tiny & fastest, very robotic · ~20 MB'
+      label: 'Claude · female es-MX — best Piper quality, Mexican accent · ~63 MB'
     }
   };
   var DEFAULT_VOICE = 'kokoro-ef_dora';

@@ -1444,7 +1444,22 @@
     'Los jueves jugamos al fútbol con mis primos.',
     'La biblioteca cierra a las ocho en punto.',
     'Qué alegría verte después de tanto tiempo.',
-    'El zorro corre entre los árboles del bosque.'
+    'El zorro corre entre los árboles del bosque.',
+    'Mañana pasearemos por el río hasta el puente viejo.',
+    'No olvides comprar pan, leche y tomates en el mercado.',
+    '¿Cuánto cuesta el billete de ida y vuelta a Sevilla?',
+    'El concierto se ha aplazado hasta la semana que viene.',
+    'Caminábamos despacio porque la lluvia empapaba las calles.',
+    'Ayer vimos una película fabulosa en el cine del barrio.',
+    'El gato duerme encima de la silla del comedor.',
+    '¿Sabes si el tren llega puntual los domingos?',
+    'Prefiero el té verde con un chorrito de miel.',
+    'Los niños sueltan cometas en la colina del parque.',
+    'Este verano quiero visitar Galicia y probar su cocina.',
+    'El verano pasado trabajé en una tienda de deportes.',
+    'Después de comer, damos un paseo alrededor de la plaza.',
+    'La llave de la casa está en el cajón de la cocina.',
+    'Nos abrazamos en el andén antes de despedirnos.'
   ];
   var lastSample = -1;
   function voiceSample() {

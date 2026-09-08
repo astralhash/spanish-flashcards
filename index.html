@@ -2354,8 +2354,9 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
  *
  *   • Piper (VITS via @diffusionstudio/vits-web, ONNX Runtime WASM) — the
  *     lightweight fallback and the ONLY genuinely peninsular-accented tier:
- *     smaller per-voice downloads (20–110 MB), 22 kHz, more robotic. Cached
- *     in OPFS.
+ *     smaller per-voice downloads (27–77 MB), 16–22 kHz, more robotic. Cached
+ *     in OPFS. Three es_ES voices of the current Piper catalog (the two MLS
+ *     low voices are deliberately omitted — auditioned and rejected).
  *
  * Both work fully offline after their first download. Failure paths degrade
  * to silence: when the HD voice is selected, app.js stays quiet rather than
@@ -2404,7 +2405,7 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
     },
     piper: {
       label: 'Piper',
-      desc: 'authentic Spain-accented voices · 22 kHz · more robotic · 20–110 MB per voice'
+      desc: 'authentic Spain-accented voices · 16–22 kHz · more robotic · 27–77 MB per voice'
     }
   };
   var ENGINE_ORDER = ['kokoro', 'supertonic', 'piper'];
@@ -2482,17 +2483,17 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
     'es_ES-sharvard-medium': {
       engine: 'piper', voice: 'es_ES-sharvard-medium',
       group: 'Piper es-ES — authentic Spain (castellano) accent · 22 kHz · more robotic',
-      label: 'Sharvard · female es-ES — authentic Spain accent, decent · ~63 MB'
+      label: 'Sharvard · male es-ES — authentic Spain accent, decent · ~77 MB'
+    },
+    'es_ES-carlfm-x_low': {
+      engine: 'piper', voice: 'es_ES-carlfm-x_low',
+      group: 'Piper es-ES — authentic Spain (castellano) accent · 16 kHz · more robotic',
+      label: 'Carl FM · male es-ES — Spain accent, tiny & fastest, very robotic · ~27 MB'
     },
     'es_MX-claude-high': {
       engine: 'piper', voice: 'es_MX-claude-high',
       group: 'Piper es-MX — Mexican accent · 22 kHz · more robotic',
-      label: 'Claude · male es-MX — best Piper quality, Mexican accent · ~110 MB'
-    },
-    'es_ES-carlfm-x_low': {
-      engine: 'piper', voice: 'es_ES-carlfm-x_low',
-      group: 'Piper es-ES — authentic Spain (castellano) accent · 22 kHz · more robotic',
-      label: 'Carl FM · male es-ES — Spain accent, tiny & fastest, very robotic · ~20 MB'
+      label: 'Claude · female es-MX — best Piper quality, Mexican accent · ~63 MB'
     }
   };
   var DEFAULT_VOICE = 'kokoro-ef_dora';
@@ -5379,7 +5380,22 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
     'Los jueves jugamos al fútbol con mis primos.',
     'La biblioteca cierra a las ocho en punto.',
     'Qué alegría verte después de tanto tiempo.',
-    'El zorro corre entre los árboles del bosque.'
+    'El zorro corre entre los árboles del bosque.',
+    'Mañana pasearemos por el río hasta el puente viejo.',
+    'No olvides comprar pan, leche y tomates en el mercado.',
+    '¿Cuánto cuesta el billete de ida y vuelta a Sevilla?',
+    'El concierto se ha aplazado hasta la semana que viene.',
+    'Caminábamos despacio porque la lluvia empapaba las calles.',
+    'Ayer vimos una película fabulosa en el cine del barrio.',
+    'El gato duerme encima de la silla del comedor.',
+    '¿Sabes si el tren llega puntual los domingos?',
+    'Prefiero el té verde con un chorrito de miel.',
+    'Los niños sueltan cometas en la colina del parque.',
+    'Este verano quiero visitar Galicia y probar su cocina.',
+    'El verano pasado trabajé en una tienda de deportes.',
+    'Después de comer, damos un paseo alrededor de la plaza.',
+    'La llave de la casa está en el cajón de la cocina.',
+    'Nos abrazamos en el andén antes de despedirnos.'
   ];
   var lastSample = -1;
   function voiceSample() {
