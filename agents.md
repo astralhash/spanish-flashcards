@@ -215,10 +215,14 @@ HD is strictly opt-in (`settings.hd: false` default).
   two creates) dies as a detached buffer — Firefox fails with "attempting to
   access detached ArrayBuffer".
 - **Piper** (`@diffusionstudio/vits-web@1.0.3` — latest npm release; ONNX WASM,
-  per-voice 27–77 MB, 16–22 kHz, cached in OPFS). The ONLY genuinely
+  per-voice 27–114 MB, 16–22 kHz, cached in OPFS). The ONLY genuinely
   peninsular tier (`es_ES` voices — davefx/sharvard medium, carlfm x_low;
   the two MLS low voices of the Piper catalog are deliberately omitted:
-  auditioned and rejected as terrible). Kept as the lightweight fallback.
+  auditioned and rejected as terrible). Plus the community-trained
+  `es_ES-carlfm-high` (friyin on HF, public-domain dataset): registered into
+  vits-web's live `PATH_MAP` export at engine load (`../..`-climb to the HF
+  host root — the browser URL parser normalizes it, OPFS keys on the file
+  name). Kept as the lightweight fallback.
 
 To add a voice: one entry in `VOICES` (`engine` + engine-native `voice` id +
 honest `group`/`label` covering accent, quality and size); Piper ids are

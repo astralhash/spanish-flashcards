@@ -22,9 +22,11 @@
  *
  *   • Piper (VITS via @diffusionstudio/vits-web, ONNX Runtime WASM) — the
  *     lightweight fallback and the ONLY genuinely peninsular-accented tier:
- *     smaller per-voice downloads (27–77 MB), 16–22 kHz, more robotic. Cached
- *     in OPFS. Three es_ES voices of the current Piper catalog (the two MLS
- *     low voices are deliberately omitted — auditioned and rejected).
+ *     smaller per-voice downloads (27–114 MB), 16–22 kHz, more robotic. Cached
+ *     in OPFS. Three es_ES voices of the official Piper catalog (the two MLS
+ *     low voices are deliberately omitted — auditioned and rejected) plus the
+ *     community-trained carlfm-high (friyin), which is registered into
+ *     vits-web's live PATH_MAP below since it is not in the bundled catalog.
  *
  * Both work fully offline after their first download. Failure paths degrade
  * to silence: when the HD voice is selected, app.js stays quiet rather than
@@ -73,7 +75,7 @@
     },
     piper: {
       label: 'Piper',
-      desc: 'authentic Spain-accented voices · 16–22 kHz · more robotic · 27–77 MB per voice'
+      desc: 'authentic Spain-accented voices · 16–22 kHz · more robotic · 27–114 MB per voice'
     }
   };
   var ENGINE_ORDER = ['kokoro', 'supertonic', 'piper'];
@@ -152,6 +154,11 @@
       engine: 'piper', voice: 'es_ES-sharvard-medium',
       group: 'Piper es-ES — authentic Spain (castellano) accent · 22 kHz · more robotic',
       label: 'Sharvard · male es-ES — authentic Spain accent, decent · ~77 MB'
+    },
+    'es_ES-carlfm-high': {
+      engine: 'piper', voice: 'es_ES-carlfm-high',
+      group: 'Piper es-ES — authentic Spain (castellano) accent · 22 kHz · more robotic',
+      label: 'Carl FM High · male es-ES — community-trained high tier, the most natural Piper Spain voice · ~114 MB'
     },
     'es_ES-carlfm-x_low': {
       engine: 'piper', voice: 'es_ES-carlfm-x_low',
@@ -1281,6 +1288,18 @@
       if (!this.modP) {
         setStatus('loading', 'loading engine…');
         this.modP = import(PIPER_CDN).then(function (m) {
+          /* Community voices are not in vits-web's bundled catalog, and
+             predict()/download() resolve every voice through it. PATH_MAP is
+             exported live, so registering a path here extends the catalog
+             without a fork. The value is interpolated as <mirror>/<path> —
+             the ../.. climb up to the HF host root is normalized by the
+             browser's URL parser at fetch time, and vits-web keys its OPFS
+             cache on the last path segment (the bare file name), so caching,
+             prefetch and remove() all keep working for the custom voice. */
+          if (m.PATH_MAP && !m.PATH_MAP['es_ES-carlfm-high']) {
+            m.PATH_MAP['es_ES-carlfm-high'] =
+              '../../../../friyin/vits-piper-es_ES-carlfm-high/resolve/main/es_ES-carlfm-high.onnx';
+          }
           self.mod = m;
           return m;
         }).catch(function (err) {
