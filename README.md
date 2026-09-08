@@ -60,6 +60,37 @@ python3 -m http.server 8000       # or: npx serve .
 - **Import** — add your own words in Settings (JSON array or `es | en | level | cluster` lines).
 - **Stats & themes** — XP, streaks, review counts; light/dark theme.
 
+## Offline audio package (optional)
+
+Supertonic is the highest-quality HD voice tier, but its in-browser "pre-heat"
+re-runs the ~380 MB model on every word, which is slow. If you want the whole
+deck's audio available instantly and offline, you can pre-synthesize it once
+**outside** the browser and import the finished package:
+
+```sh
+npm --prefix scripts/tts-package i    # once: installs onnxruntime-node
+node scripts/tts-package/build.mjs    # -> audio/  (Supertonic F2 @ 1.00)
+```
+
+Then in the app: Settings → HD voice → pick a Supertonic voice → **📦 Load audio
+package** → select the generated `audio/` folder. The import auto-switches the
+voice/rate selection to match the package, so the cached audio applies
+immediately and every word plays with no model load.
+
+**Other voices / rates:** a package only matches the exact voice + rate it was
+built with, so build one for the voice you actually want:
+
+```sh
+node scripts/tts-package/build.mjs --voice M1 --rate 0.92 --out /tmp/audio-M1
+```
+
+The tool takes any Supertonic voice (`F1`–`F5`, `M1`–`M5`) and any rate
+(0.7–2.0). It shares one ~380 MB model download cached in
+`scripts/tts-package/.cache/`, so a second voice only re-runs the synthesis.
+If you later switch to a voice with no matching package, the UI warns you that
+words will be synthesized on demand again — build and import a package for that
+voice to cache it.
+
 ## Repository layout
 
 | Path | Purpose |
@@ -76,6 +107,7 @@ python3 -m http.server 8000       # or: npx serve .
 | `scripts/conj-test.mjs` | battery of conjugation checks (`conj.cjs`) |
 | `scripts/tests/e2e.mjs` | jsdom end-to-end test against the built `index.html` |
 | `scripts/topup.mjs` | dev helper: fill level shortfalls from curated candidates |
+| `scripts/tts-package/build.mjs` | offline builder: pre-synthesize all words as Opus (Supertonic via onnxruntime-node + ffmpeg) |
 
 See `agents.md` for the working conventions (data format, dedupe rules,
 conjugation coverage, test commands).

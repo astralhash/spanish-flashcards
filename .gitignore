@@ -1,6 +1,12 @@
 # dependencies (jsdom for e2e tests)
 scripts/tests/node_modules/
 
+# TTS package builder (scripts/tts-package): onnxruntime-node dep + downloaded
+# model cache (~380 MB) + the generated audio package
+scripts/tts-package/node_modules/
+scripts/tts-package/.cache/
+/audio/
+
 # OS junk
 .DS_Store
 *.log

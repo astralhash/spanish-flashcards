@@ -401,8 +401,12 @@ kbd {
 .warm-bar { height: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
 .warm-bar div { height: 100%; width: 0; border-radius: 999px; background: var(--grad); transition: width .2s ease; }
 .warm-cache-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-.warm-cache-row #clearCacheBtn { padding: 6px 10px; font-size: .78rem; }
+.warm-actions { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.warm-cache-row .warm-cancel { padding: 6px 10px; font-size: .78rem; }
 .warm-cache-row #clearCacheBtn:disabled { opacity: .5; cursor: default; }
+#pkgInfo { display: block; margin-top: 4px; }
+#pkgInfo.pkg-ok { color: var(--ok); }
+#pkgInfo.pkg-warn { color: var(--warn); }
 .field select, select {
   width: 100%; font: inherit; font-weight: 650; font-size: .88rem;
   color: var(--text); background: var(--surface);

@@ -1,0 +1,10 @@
+{
+  "name": "vocabes-tts-package",
+  "version": "1.0.0",
+  "description": "Offline build tool: pre-synthesize every Spanish word with the Supertonic 3 TTS model and encode it as Opus, so the browser can import the audio package instead of warming in-browser.",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "onnxruntime-node": "1.29.0"
+  }
+}

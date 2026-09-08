@@ -104,9 +104,16 @@ async function main(phase, tmp) {
         let i = 0;
         return {
           next: async function () {
-            return i < names.length
-              ? { value: { name: names[i++] }, done: false }
-              : { done: true };
+            if (i >= names.length) return { done: true };
+            const n = names[i++];
+            const fp = path.join(p, n);
+            return { value: {
+              name: n,
+              getFile: async function () {
+                const bytes = fs.readFileSync(fp);
+                return { size: bytes.length, arrayBuffer: async function () { return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength); } };
+              }
+            }, done: false };
           }
         };
       }
@@ -179,6 +186,35 @@ async function main(phase, tmp) {
     for (const u of downloads) assert.equal(counts[u], 1, 'single download: ' + u);
     assert.equal(downloads.length, 7, 'exactly 7 downloads (6 assets + voice style), got ' + downloads.length);
     console.log('  page 1: 7 downloads, all assets persisted under flat names');
+
+    /* importWordCache: writes downloaded package files straight into the OPFS
+       word cache; junk names are ignored; a second import skips the files it
+       already wrote. The cached key must then be findable via cacheStats. The
+       package's index.json manifest is recorded as package metadata. */
+    {
+      const key1 = NTT._wordKey('F1', '<es>adiós.</es>', 1);
+      const key2 = NTT._wordKey('F1', '<es>gato.</es>', 1);
+      const fake = (name) => ({ name, arrayBuffer: async () => new TextEncoder().encode('PACKAGE-' + name) });
+      const manifest = { voice: 'F1', rate: 1, rateKey: '1.00', bitrateKbps: 48, count: 2, files: [key1 + '.ogg', key2 + '.ogg'] };
+      const r1 = await NTT.importWordCache([
+        fake(key1 + '.ogg'), fake(key2 + '.ogg'), fake('readme.txt'),
+        { name: 'index.json', arrayBuffer: async () => new TextEncoder().encode(JSON.stringify(manifest)) }
+      ]);
+      assert.equal(r1.imported, 2, 'import writes the two package files (got ' + JSON.stringify(r1) + ')');
+      const r2 = await NTT.importWordCache([fake(key1 + '.ogg'), fake(key2 + '.ogg')]);
+      assert.equal(r2.skipped, 2, 'second import skips files already in the cache (' + JSON.stringify(r2) + ')');
+      const wFiles = fs.readdirSync(path.join(tmp, 'tts-cache'));
+      assert.ok(wFiles.indexOf(key1 + '.ogg') !== -1 && wFiles.indexOf(key2 + '.ogg') !== -1,
+        'imported package files land in tts-cache (' + wFiles.join(',') + ')');
+      const stats = await NTT.cacheStats();
+      assert.equal(stats.count, 3, 'cacheStats counts the warm word + 2 imported (' + stats.count + ')');
+      const pkg = await NTT.packageInfo();
+      assert.equal(pkg.voice, 'F1', 'packageInfo voice (' + JSON.stringify(pkg) + ')');
+      assert.equal(pkg.rateKey, '1.00', 'packageInfo rate key');
+      assert.equal(pkg.count, 2, 'packageInfo count from the manifest');
+      assert.ok(wFiles.indexOf('package-meta.json') !== -1, 'package meta persisted to OPFS');
+      console.log('  page 1: audio-package import writes 2 files, re-import skips both; package meta persisted');
+    }
   } else {
     /* simulated reload: fresh process, same disk — the model must be reused */
     assert.equal(await NTT.modelCached(), true, 'reload: model recognized as cached');
@@ -195,6 +231,11 @@ async function main(phase, tmp) {
     assert.equal(res3.done, 1, 'reload: new word synthesized (' + JSON.stringify(res3) + ')');
     assert.equal(res3.failed, 0, 'reload: no failures');
     assert.equal(downloads.length, 0, 'reload: synthesis from cache fetched NOTHING');
-    console.log('  page 2 (reload): 0 downloads; cached word skipped, new word synthesized');
+
+    /* the imported package metadata must survive the reload (read from OPFS) */
+    const pkg = await NTT.packageInfo();
+    assert.equal(pkg.voice, 'F1', 'reload: package voice remembered (' + JSON.stringify(pkg) + ')');
+    assert.equal(pkg.rateKey, '1.00', 'reload: package rate remembered');
+    console.log('  page 2 (reload): 0 downloads; cached word skipped, new word synthesized, package meta persisted');
   }
 }
