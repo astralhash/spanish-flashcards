@@ -426,6 +426,14 @@
     got: {},                     /* asset name -> bytes downloaded (progress) */
 
     /* ---- OPFS cache (graceful fallback to no-cache, e.g. on file://) ---- */
+    /* OPFS forbids '/' in file names; asset names are repo-style paths
+       ('onnx/tts.json', 'voice_styles/F1.json'). Flatten the directory part
+       into the name so the write and every later lookup agree — unmangled
+       names made each getFileHandle reject (silently swallowed), so nothing
+       was ever stored and the ~380 MB model re-downloaded every session. */
+    fsName: function (name) {
+      return String(name).replace(/\//g, '__');
+    },
     cacheDir: function () {
       if (this._dir !== undefined) return Promise.resolve(this._dir || null);
       var self = this;
@@ -448,15 +456,16 @@
       var self = this;
       return this.cacheDir().then(function (dir) {
         if (!dir) return null;
-        return dir.getFileHandle(name).then(function (f) {
+        return dir.getFileHandle(self.fsName(name)).then(function (f) {
           return f.getFile().then(function (file) { return file.arrayBuffer(); });
         }).catch(function () { return null; });
       });
     },
     cachePut: function (name, buf) {
+      var self = this;
       return this.cacheDir().then(function (dir) {
         if (!dir) return;
-        return dir.getFileHandle(name, { create: true }).then(function (f) {
+        return dir.getFileHandle(self.fsName(name), { create: true }).then(function (f) {
           return f.createWritable().then(function (w) {
             return w.write(buf).then(function () { return w.close(); });
           });
