@@ -271,17 +271,7 @@ load and no inference**. Kokoro/Piper synthesize directly (no cache).
   "this page is slowing your browser" during the minutes-long compile). WASM
   threads are capped at `ORT_THREADS` (4); Opus encodes run one-at-a-time
   behind an `ENCODE_MAX` (1) semaphore (MediaRecorder is realtime,
-  main-thread), and the loop yields between words. The rolling window is
-  **cancel-then-chain**: a new `prefetchAhead` cancels the stale `aheadJob`
-  (stops after its in-flight word) and chains the fresh window behind it, so
-  fast flips never pile up full stale windows. `wordCacheGet` has a memory
-  fast-path (LRU first, disk hits promoted with `wordMemPut`) and probes the
-  three OPFS extensions in parallel (preference webm > ogg > wav applied to
-  results); the narration-yield poll is 100 ms. Deliberately NOT done (a
-  previous attempt regressed to silence): queue-free interactive-engine
-  priming (`prime()` outside `enqueue`) and fire-and-forget Opus stores
-  (`backgroundStore`) — both reshaped who waits in the shared ort proxy worker
-  at the moment narration is wanted. The Settings modal wires a
+  main-thread), and the loop yields between words. The Settings modal wires a
   "Pre-heat word audio cache" button
   + progress bar that shows only when the HD voice is Supertonic (the Opus
   cache doesn't exist for Kokoro/Piper), plus a live "Cached audio: X MB · N

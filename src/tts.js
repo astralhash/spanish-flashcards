@@ -1039,25 +1039,18 @@
       return f.getFile();
     }).catch(function () { return null; });
   }
-  /* opus blob preferred (small); wav fallback accepted (older pass / no encoder).
-     Memory (LRU) fast-path first — an OPFS-promoted or in-session word never
-     round-trips the filesystem again. The three extensions are probed in
-     PARALLEL (each probe resolves null on a miss, so parallelism is safe; the
-     webm > ogg > wav preference is applied to the settled results), and every
-     disk hit is promoted into the LRU so subsequent lookups stay in memory. */
+  /* opus blob preferred (small); wav fallback accepted (older pass / no encoder) */
   function wordCacheGet(key) {
-    var mem = wordMemGet(key);
-    if (mem) return Promise.resolve(mem);
     return wordDir().then(function (dir) {
       if (!dir) return null;
-      return Promise.all([
-        wordFileGet(dir, key + '.webm'),
-        wordFileGet(dir, key + '.ogg'),
-        wordFileGet(dir, key + '.wav')
-      ]).then(function (hits) {
-        var f = hits[0] || hits[1] || hits[2] || null;
-        if (f) wordMemPut(key, f);
-        return f;
+      return wordFileGet(dir, key + '.webm').then(function (f) {
+        if (f) return f;
+        return wordFileGet(dir, key + '.ogg');
+      }).then(function (f) {
+        if (f) return f;
+        return wordFileGet(dir, key + '.wav');
+      }).then(function (f) {
+        return f || null;
       });
     }).catch(function () { return null; });
   }
@@ -1295,12 +1288,12 @@
      watchdog so a wedged ort proxy worker can never freeze the batch forever
      (it used to stall at "N-1 remaining" when the proxy died mid-run), and a
      run of consecutive failures aborts the batch with a clear error instead of
-      burning the whole list. opts.wait (optional) is awaited before each word
-      so a caller can yield to quiz narration — the word the learner is waiting
-      for must never queue behind a warm word in the shared ort proxy worker.
-      Resolves to { done, skipped, failed, total, percent }; the promise also
-      carries a .cancel() that stops the batch after the current in-flight
-      word. */
+     burning the whole list. opts.wait (optional) is awaited before each word
+     so a caller can yield to quiz narration — the word the learner is waiting
+     for must never queue behind a warm word in the shared ort proxy worker.
+     Resolves to { done, skipped, failed, total, percent }; the promise also
+     carries a .cancel() that stops the batch after the current in-flight
+     word. */
 
   /* Reject if the underlying promise neither resolves nor rejects in time.
      The orphaned promise is simply abandoned (it can never be cancelled), but
@@ -1342,10 +1335,7 @@
       summary.percent = total ? Math.min(100, Math.round((done + skipped) / total * 100)) : 100;
       if (onProgress) onProgress(summary);
     }
-    /* Hold intake while an interactive synthesis (the word the learner just
-       revealed) is running its inference on the shared ort proxy worker —
-       widens the wait() gate from only word boundaries into wherever the
-       reveal lands. Bounded by the same yield watchdog. */    function warmOne(worker, word) {
+    function warmOne(worker, word) {
       var key = null, tPre = null;
       try {
         tPre = supersonic.prep(word);
