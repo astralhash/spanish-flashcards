@@ -159,9 +159,16 @@ to hit round totals — exceeding targets is fine.
 ## HD voice engines (src/tts.js)
 
 `window.NeuralTTS` exposes three lazily-imported engines behind one interface:
-`speak(text, {voice, rate})` · `stop()` · `prefetch(id, cb)` · `status()` ·
+`speak(text, {voice, rate})` · `stop()` · `prefetch(id, cb)` · `prime(id)` ·
+`status()` ·
 `onStatus(fn)` · `onAudio(fn)` · `clearWordCache()` · `voices`
 (`{id -> {engine, voice, group, label}}`) · `engines` + `engineOrder`.
+`prime(id)` compiles the INTERACTIVE Supertonic session set + fetches the voice
+style WITHOUT going through the serialized `enqueue` chain (that's what starved
+the first `speak()` in a reverted attempt). `prefetchAhead` fires it first on
+every card/question render so the interactive sessions enter the shared
+`compileSlot` lock before the warm worker's — a cold first reveal waits for one
+compile, not two.
 Settings renders a two-step picker: HD model dropdown (`#setHdEngine`,
 `settings.hdEngine`) then the voices of that model (`#setHdVoice`,
 `settings.hdVoice`); stored settings from before `hdEngine` existed backfill
@@ -271,7 +278,21 @@ load and no inference**. Kokoro/Piper synthesize directly (no cache).
   "this page is slowing your browser" during the minutes-long compile). WASM
   threads are capped at `ORT_THREADS` (4); Opus encodes run one-at-a-time
   behind an `ENCODE_MAX` (1) semaphore (MediaRecorder is realtime,
-  main-thread), and the loop yields between words. The Settings modal wires a
+  main-thread), and the loop yields between words. The loop also holds
+  INTAKE while an interactive synthesis runs (`interactiveInfer` counter +
+  `idleGate`, same yield watchdog) — a reveal mid-warm rarely queues its
+  inference behind a warm word. `opts.backgroundStore` (rolling windows ONLY —
+  `prefetchAhead` sets it; the full pre-heat keeps awaiting so its "done" still
+  means on disk) makes the per-word Opus encode + OPFS write fire-and-forget so
+  the ort proxy worker doesn't idle behind the realtime encode; the in-memory
+  LRU gets a playable WAV copy immediately, so the "done but not yet on disk"
+  window is covered by the memory fast-path. The rolling window is
+  **cancel-then-chain**: a new `prefetchAhead` cancels the stale `aheadJob`
+  (stops after its in-flight word) and chains the fresh window behind it, so
+  fast flips never pile up full stale windows. `wordCacheGet` has a memory
+  fast-path (LRU first, disk hits promoted with `wordMemPut`) and probes the
+  three OPFS extensions in parallel (preference webm > ogg > wav applied to
+  results); the narration-yield poll is 100 ms. The Settings modal wires a
   "Pre-heat word audio cache" button
   + progress bar that shows only when the HD voice is Supertonic (the Opus
   cache doesn't exist for Kokoro/Piper), plus a live "Cached audio: X MB · N

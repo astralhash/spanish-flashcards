@@ -1671,6 +1671,10 @@
   function prefetchAhead() {
     if (!settings.tts || !settings.hd || warmJob) return;
     if (!window.NeuralTTS || !NeuralTTS.warmCache || !warmEngineOk()) return;
+    /* Cold start: get the INTERACTIVE engine into the shared compile lock
+       first (fire-and-forget, outside the speak queue), so the first reveal
+       waits for one compile instead of warm-then-interactive. */
+    if (NeuralTTS.prime) { try { NeuralTTS.prime(settings.hdVoice); } catch (e) { /* best-effort */ } }
     var words = aheadWords();
     if (!words.length) return;
     /* hold the window while quiz narration is wanted (hdWanted) — the word
@@ -1680,12 +1684,13 @@
       return new Promise(function (resolve) {
         (function poll() {
           if (hdWanted === 0) { resolve(); return; }
-          setTimeout(poll, 250);
+          setTimeout(poll, 100);
         })();
       });
     };
     var run = function () {
-      var job = NeuralTTS.warmCache(words, { voice: settings.hdVoice, rate: settings.rate, wait: yieldToNarration }, null);
+      if (warmJob) return;   /* a full pre-heat raced in while we were chained — drop */
+      var job = NeuralTTS.warmCache(words, { voice: settings.hdVoice, rate: settings.rate, wait: yieldToNarration, backgroundStore: true }, null);
       aheadJob = job;
       var settle = function () {
         if (aheadJob === job) aheadJob = null;
@@ -1693,8 +1698,17 @@
       };
       job.then(settle, settle);
     };
-    if (aheadJob) aheadJob.then(run, run);   /* previous window still going — chain */
-    else run();
+    var prev = aheadJob;
+    if (prev) {
+      /* cancel-then-chain: a fast flip makes the old window stale (it warms
+         words the learner has already passed); stop it after its in-flight
+         word and only then start the fresh one — one warm loop on the shared
+         worker at a time, but never a pile-up of stale full windows. */
+      if (prev.cancel) prev.cancel();
+      prev.then(run, run);
+    } else {
+      run();
+    }
   }
   function cancelWarm() {
     if (!warmJob) return;
