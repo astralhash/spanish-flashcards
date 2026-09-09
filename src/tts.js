@@ -44,8 +44,6 @@
   *   .onAudio(fn)            subscribe to playback events { type: play|ended|stop, audio }
   *                           ('play' carries the live element for UI visualisation)
  *   .prefetch(id, cb)       download engine+model ahead of time (cb gets % 0-100)
- *   .prime(id)              compile the INTERACTIVE Supertonic session set + fetch
- *                           the voice style, OUTSIDE the speak queue (fire & forget)
  *   .status()               { status: idle|loading|ready|error, detail }
  *   .onStatus(fn)           subscribe to status changes
  */
@@ -815,11 +813,7 @@
           releaseIfStale();
           var t = tPre || self.prep(text);
           var speed = speedPre;
-          interactiveInfer++;
-          return self.infer(style, t, speed, releaseIfStale).then(function (out) {
-            interactiveInfer--;
-            return out;
-          }, function (e) { interactiveInfer--; throw e; });
+          return self.infer(style, t, speed, releaseIfStale);
         }).then(function (out) {
           if (!out) return null;
           var wav = out.wav, sr = out.sr;
@@ -879,11 +873,6 @@
      it (an OOM recipe). The worker is cached across warm runs so a retry
      after a Stop doesn't re-pay the minutes-long compile. */
   var _warmWorker = null;
-  /* Interactive first-use generations in flight (supersonic.speak's own
-     synthesis pipeline). The warm worker's loop holds INTAKE while one is
-     running, so a reveal the learner is waiting for rarely has to share the
-     single ort proxy worker with a warm inference mid-flight. */
-  var interactiveInfer = 0;
   function makeWarmWorker() {
     var w = {
       ort: null, dp: null, te: null, ve: null, voc: null,
@@ -1299,24 +1288,6 @@
     });
   }
 
-  /* Prime the INTERACTIVE engine (compile its session set + fetch the voice
-     style). Deliberately does NOT go through the serialized enqueue chain —
-     that is what made priming starve the first real speak() last time — the
-     caller just fires it and forgets. Called at quiz start, it enters the
-     compileSlot lock BEFORE the warm worker's ensure(), so a cold first reveal
-     waits for one compile (its own) instead of two (warm worker + interactive
-     queued behind it). Idempotent: ensure()/style() return ready work. */
-  function prime(voiceId) {
-    var meta = VOICES[voiceId] || VOICES[DEFAULT_VOICE];
-    if (!meta || meta.engine !== 'supertonic') return Promise.resolve(null);
-    return supersonic.ensure().then(function () {
-      return supersonic.style(meta.voice);
-    }).catch(function (err) {
-      console.warn('[vocabes] Supertonic engine priming failed:', err);
-      return null;
-    });
-  }
-
   /* Pre-heat the Supertonic Opus word cache: synthesize every word and store the
      encoded audio so later repeats play instantly with no model load or
      inference. Words already cached are skipped (and count as done). One word
@@ -1324,18 +1295,12 @@
      watchdog so a wedged ort proxy worker can never freeze the batch forever
      (it used to stall at "N-1 remaining" when the proxy died mid-run), and a
      run of consecutive failures aborts the batch with a clear error instead of
-     burning the whole list. opts.wait (optional) is awaited before each word
-     so a caller can yield to quiz narration — the word the learner is waiting
-     for must never queue behind a warm word in the shared ort proxy worker.
-     With opts.backgroundStore the per-word Opus encode + OPFS write run
-     fire-and-forget (the in-memory LRU holds a playable copy the moment
-     synthesis lands) so the ort proxy worker never idles behind the realtime
-     encode — for ROLLING windows only, where the overlap risk with an
-     interactive inference is gated by an intake idle-check; the full pre-heat
-     keeps awaiting the store so its "done" count still means cached on disk.
-     Resolves to { done, skipped, failed, total, percent }; the promise also
-     carries a .cancel() that stops the batch after the current in-flight
-     word. */
+      burning the whole list. opts.wait (optional) is awaited before each word
+      so a caller can yield to quiz narration — the word the learner is waiting
+      for must never queue behind a warm word in the shared ort proxy worker.
+      Resolves to { done, skipped, failed, total, percent }; the promise also
+      carries a .cancel() that stops the batch after the current in-flight
+      word. */
 
   /* Reject if the underlying promise neither resolves nor rejects in time.
      The orphaned promise is simply abandoned (it can never be cancelled), but
@@ -1353,7 +1318,6 @@
   var WARM_WORD_TIMEOUT = 180000;     /* style + inference + store for ONE word */
   var WARM_COMPILE_TIMEOUT = 900000;  /* asset download + first-use compile can take many minutes */
   var WARM_YIELD_TIMEOUT = 60000;     /* hold for quiz narration before a word */
-  var WARM_IDLE_POLL = 100;           /* intake idle-gate poll interval */
   var WARM_MAX_CONSEC_FAILS = 5;      /* systematic breakage → stop, don't burn the list */
 
   function warmCache(words, opts, onProgress) {
@@ -1371,7 +1335,6 @@
       return Promise.resolve(empty);
     }
     var i = 0, done = 0, skipped = 0, failed = 0, stopped = false;
-    var backgroundStore = !!opts.backgroundStore;
     var broken = null;          /* Error — set when the engine is systematically broken */
     var consecFails = 0, lastErr = null;
     function report() {
@@ -1382,16 +1345,7 @@
     /* Hold intake while an interactive synthesis (the word the learner just
        revealed) is running its inference on the shared ort proxy worker —
        widens the wait() gate from only word boundaries into wherever the
-       reveal lands. Bounded by the same yield watchdog. */
-    function idleGate() {
-      return new Promise(function (resolve) {
-        (function poll() {
-          if (stopped || interactiveInfer === 0) { resolve(); return; }
-          setTimeout(poll, WARM_IDLE_POLL);
-        })();
-      });
-    }
-    function warmOne(worker, word) {
+       reveal lands. Bounded by the same yield watchdog. */    function warmOne(worker, word) {
       var key = null, tPre = null;
       try {
         tPre = supersonic.prep(word);
@@ -1403,7 +1357,6 @@
         if (!tPre) return 'failed';
         var yieldP = wait ? warmGuard(wait(), WARM_YIELD_TIMEOUT, 'yield to quiz narration') : Promise.resolve();
         return yieldP.then(function () {
-          return warmGuard(idleGate(), WARM_YIELD_TIMEOUT, 'yield to interactive synthesis').then(function () {
           return warmGuard(worker.ensure(), WARM_COMPILE_TIMEOUT, 'Supertonic model compile').then(function () {
             return warmGuard(supersonic.style(meta.voice).then(function (style) {
               if (!style) return null;
@@ -1411,21 +1364,11 @@
             }).then(function (out) {
               if (!out) return 'failed';
               var blob = wavBlob(out.wav, out.sr);
-              if (backgroundStore) {
-                /* memory holds a playable copy right now; the realtime Opus
-                   encode + OPFS write continue detached so the next inference
-                   starts immediately instead of idling behind the ~1-2 s encode.
-                   wordCacheStore never rejects (worst case it stores the WAV). */
-                wordMemPut(key, blob);
-                wordCacheStore(key, out.wav, out.sr, blob).catch(function () {});
-                return 'done';
-              }
               /* await the write so "done" means cached on disk, not merely
                  synthesized — the realtime Opus encode is bounded by its own
                  recorder safety timeout */
               return wordCacheStore(key, out.wav, out.sr, blob).then(function () { return 'done'; });
             }), WARM_WORD_TIMEOUT, 'Supertonic synthesis');
-          });
           });
         });
       }).catch(function (err) {
@@ -1562,7 +1505,6 @@
     speak: speak,
     stop: stop,
     prefetch: prefetch,
-    prime: prime,
     warmCache: warmCache,
     hasCachedWord: hasCachedWord,
     stored: storedList,
