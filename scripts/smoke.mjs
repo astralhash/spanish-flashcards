@@ -161,6 +161,14 @@ ok(!Core.answerMatches('salir', 'ir'), 'rejects substring traps');
 ok(!Core.answerMatches('la mesa', ''), 'rejects empty guess');
 ok(Core.normalizeAnswer('¡MÁÑANA!') === 'manana', 'normalizeAnswer strips accents + punctuation');
 
+/* English definite article "the" is optional on either side */
+ok(Core.answerMatches('the belt', 'belt'), 'gloss "the X" matches bare "X"');
+ok(Core.answerMatches('belt', 'the belt'), 'bare gloss matches "the X"');
+ok(Core.answerMatches('the belt, strap', 'strap'), 'the-stripping works per synonym');
+ok(Core.answerMatches('the conversation', 'conversation'), 'get-stripped variant matches a bare synonym-side gloss');
+ok(!Core.answerMatches('belt', 'the'), 'a lone "the" is not a valid answer');
+ok(!Core.answerMatches('belt', 'belted'), 'the-stripping does not loosen the match otherwise');
+
 /* multi-synonym answers ("beanie, winter hat"): any one right synonym counts */
 ok(Core.answerMatches('beanie, winter hat', 'beanie'), 'matches a single synonym');
 ok(Core.answerMatches('beanie, winter hat', 'winter hat'), 'matches the other synonym');

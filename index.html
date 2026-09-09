@@ -1263,10 +1263,18 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
   }
   var ES_ART = /^(el|la|los|las|lo|un|una|unos|unas|der|die|das)\s+/;
   var EN_TO = /^to\s+/;
+  var EN_THE = /^the\s+/;
 
   /* drop a leading infinitive "to" from an English gloss, never down to empty */
   function stripTo(s) {
     var r = s.replace(EN_TO, '');
+    return r.length ? r : s;
+  }
+
+  /* drop a leading definite article "the" from an English gloss,
+     never down to empty ("the" alone stays "the") */
+  function stripThe(s) {
+    var r = s.replace(EN_THE, '');
     return r.length ? r : s;
   }
 
@@ -1287,14 +1295,28 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
     return out;
   }
 
+  /* both article conventions are optional on either side — Spanish
+     el/la/un/... as well as an English "the" (glosses vary) */
+  function stripArt(s) {
+    s = s.replace(ES_ART, '').replace(EN_THE, '');
+    return s.replace(ES_ART, '');
+  }
+
   function baseMatch(t, g) {
     if (t === g) return true;
-    var ts = t.replace(ES_ART, '');
-    var gs = g.replace(ES_ART, '');
-    if (!ts.length || !gs.length) return false;
-    var tt = stripTo(ts), gt = stripTo(gs);
-    return ts === g || t === gs || ts === gs ||
-           tt === gs || ts === gt || tt === gt;   /* accept/ignore a leading article or infinitive "to" on either side */
+    var ta = stripArt(t), ga = stripArt(g);
+    var va = [t, ta, stripThe(ta)],
+        vb = [g, ga, stripThe(ga)];
+    if (!ta.length || !ga.length) return false;
+    /* a leading infinitive "to" is optional on either side */
+    var i, j;
+    for (i = 0; i < va.length; i++) {
+      for (j = 0; j < vb.length; j++) {
+        if (va[i] === vb[j]) return true;
+        if (stripTo(va[i]) === stripTo(vb[j])) return true;
+      }
+    }
+    return false;
   }
 
   /* numbers: accept the word or the digits ("ten (10)" <-> "ten" / "10",
