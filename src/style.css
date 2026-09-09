@@ -404,9 +404,6 @@ kbd {
 .warm-actions { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .warm-cache-row .warm-cancel { padding: 6px 10px; font-size: .78rem; }
 .warm-cache-row #clearCacheBtn:disabled { opacity: .5; cursor: default; }
-#pkgInfo { display: block; margin-top: 4px; }
-#pkgInfo.pkg-ok { color: var(--ok); }
-#pkgInfo.pkg-warn { color: var(--warn); }
 .field select, select {
   width: 100%; font: inherit; font-weight: 650; font-size: .88rem;
   color: var(--text); background: var(--surface);

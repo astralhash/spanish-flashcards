@@ -15,8 +15,6 @@ node scripts/tests/tts-transfer-test.mjs   # Supertonic infer under ort's
                                     # buffer-TRANSFER rules (stubbed ort: model
                                     # bytes neutered per create, tensor data
                                     # neutered per run — any reuse throws)
-node scripts/tts-package/build.mjs  # OFFLINE Supertonic audio package (see below;
-                                    # deps in scripts/tts-package: npm i)
 ```
 
 If `node` isn't on PATH, use `/opt/homebrew/bin/node`.
@@ -297,46 +295,6 @@ load and no inference**. Kokoro/Piper synthesize directly (no cache).
   never rejects a `speak()`.
 - Opus decode in Safari was partial until macOS 15.4 / iOS 18.4 — Chrome and
   Firefox encode AND decode; Safari re-synthesizes. Accepted trade-off.
-
-## Offline audio package (scripts/tts-package/build.mjs)
-
-In-browser pre-heat re-runs inference on every word and is slow, so there is an
-offline builder that pre-synthesizes the whole deck **outside** the browser and
-ships it as a folder the app imports:
-
-```sh
-npm --prefix scripts/tts-package i          # once: installs onnxruntime-node
-node scripts/tts-package/build.mjs          # -> <repo>/audio (st-F2 @ 1.00)
-node scripts/tts-package/build.mjs --voice M1 --rate 0.92 --out /tmp/audio
-```
-
-- Runs the **same** Supertonic ONNX assets + `prep`/`ids`/`infer` math as
-  `src/tts.js`, but on `onnxruntime-node` (native CPU, no WASM/proxy transfer
-  rules). Each word is synthesized → 16-bit WAV → **ffmpeg** `libopus` Ogg
-  (48 kbps, must be on PATH) → written as `<key>.ogg` where `<key>` is the
-  browser's exact `wordKey` (`NeuralTTS._wordKey`), so imported files slot
-  straight into the existing cache lookup. The ~380 MB model is downloaded once
-  and cached under `scripts/tts-package/.cache/` (gitignored).
-- A package is only useful for the **exact voice + rate it was built with** (both
-  are baked into the key). Default is `F2` @ `1.00`; pass `--voice`/`--rate` to
-  match the user's settings. `index.json` records `{voice, rate, rateKey,
-  bitrateKbps, count, bytes, files}`.
-- **Browser side**: `NeuralTTS.importWordCache(files)` copies `<key>.ogg/.webm/
-  .wav` files into the OPFS `tts-cache` + memory LRU (skips files already on
-  disk; no OPFS → memory-only). The package's `index.json` manifest (or the
-  `st2-<voice>-` key prefix, rate unknown then) is recorded as package metadata,
-  exposed via `NeuralTTS.packageInfo()` and persisted to OPFS
-  (`package-meta.json` in `tts-cache`; cleared by `clearWordCache`). The
-  Settings warm box's **📦 Load audio package** button wires it to a
-  `webkitdirectory` folder picker, then shows which Supertonic voice+rate the
-  cache is for (`#pkgInfo`); importing auto-switches the HD voice/rate selection
-  to match the package so the cache applies immediately; picking a voice or rate
-  that doesn't match afterwards toasts a warning that the cached files won't
-  apply and words will be synthesized on demand again. Import is best-effort and
-  never rejects.
-- e2e asserts the import API + button exist; `tts-opfs-test.mjs` exercises the
-  real write path (two files in, re-import skips, `cacheStats` counts them,
-  package meta persists across a reload).
 
 ## Voice activity orb (src/app.js, src/style.css, src/template.html)
 

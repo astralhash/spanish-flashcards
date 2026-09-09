@@ -702,45 +702,6 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
     'NeuralTTS.cacheStats + clearWordCache exposed');
   ok(!!doc.querySelector('#cacheStats') && !!doc.querySelector('#clearCacheBtn'), 'cache size + clear-cache controls present');
   ok(doc.querySelector('#clearCacheBtn').disabled === true, 'clear-cache disabled when the cache is empty');
-  ok(typeof window.NeuralTTS.importWordCache === 'function' && !!doc.querySelector('#loadPkgBtn') && !!doc.querySelector('#pkgPicker'),
-    'audio-package import exposed + UI present');
-  ok(typeof window.NeuralTTS.packageInfo === 'function' && !!doc.querySelector('#pkgInfo'),
-    'package metadata query + info line present');
-  {
-    /* no OPFS in jsdom → import falls back to memory-only and still reports
-       files it accepted; junk/foreign names are dropped. The package meta is
-       derived from the key prefix (voice F1; no manifest in this fake). */
-    const res = await window.NeuralTTS.importWordCache([
-      { name: 'st2-F1-abc123.ogg', arrayBuffer: async () => new Uint8Array([0x4f, 0x67, 0x67, 0x53]) },
-      { name: 'st2-F1-def456.webm', arrayBuffer: async () => new Uint8Array([0x1a, 0x45, 0xdf, 0xa3]) },
-      { name: 'readme.txt', arrayBuffer: async () => new Uint8Array([1]) },
-      { name: 'st2-F1-ghi789.wav', arrayBuffer: async () => new Uint8Array([0x52, 0x49, 0x46, 0x46]) }
-    ]);
-    ok(res && res.imported === 3 && res.skipped === 0,
-      'importWordCache accepts st2-*.ogg/.webm/.wav and ignores foreign names (' + JSON.stringify(res) + ')');
-    const pkg = await window.NeuralTTS.packageInfo();
-    ok(pkg && pkg.voice === 'F1' && pkg.count === 3,
-      'packageInfo reports the imported package voice (' + JSON.stringify(pkg) + ')');
-  }
-  /* driving the picker through loadAudioPackage must AUTO-SWITCH the HD voice
-     (and rate) to match the imported package, so the cache applies immediately */
-  {
-    const picker = doc.querySelector('#pkgPicker');
-    const manifest = { voice: 'F2', rate: 1, rateKey: '1.00', bitrateKbps: 48, count: 1, files: ['st2-F2-x.ogg'] };
-    Object.defineProperty(picker, 'files', { value: [
-      { name: 'st2-F2-xyz987.ogg', arrayBuffer: async () => new Uint8Array([0x4f, 0x67, 0x67, 0x53]) },
-      { name: 'index.json', arrayBuffer: async () => new TextEncoder().encode(JSON.stringify(manifest)) }
-    ], configurable: true });
-    picker.dispatchEvent(new window.Event('change', { bubbles: true }));
-    await wait(50);
-    ok(doc.querySelector('#setHdVoice').value === 'st-F2',
-      'loadAudioPackage switches the HD voice to the package voice (got ' + doc.querySelector('#setHdVoice').value + ')');
-    ok(doc.querySelector('#setHd').checked === true, 'loadAudioPackage turns HD on');
-    ok(doc.querySelector('#setRateVal').textContent === '100%', 'loadAudioPackage switches the rate to the package rate');
-    const pkg2 = await window.NeuralTTS.packageInfo();
-    ok(pkg2 && pkg2.voice === 'F2' && pkg2.rateKey === '1.00',
-      'package meta now reflects the manifest (voice + rate)');
-  }
   ok(typeof window.NeuralTTS.modelCached === 'function' && !!doc.querySelector('#modelStatus'), 'model-cache check + status element present');
   {
     const cached = await window.NeuralTTS.modelCached();
@@ -780,8 +741,6 @@ ok($$('#preOpts button').length === 4, 'pretest has 4 options');
     ok(st && st.bytes === 0 && st.count === 0, 'cacheStats resolves to zeros without OPFS');
     const n = await window.NeuralTTS.clearWordCache();
     ok(typeof n === 'number' && n === 0, 'clearWordCache resolves to a count (0 here)');
-    const pkg = await window.NeuralTTS.packageInfo();
-    ok(pkg === null, 'clearWordCache also forgets the imported package meta');
   }
 
   const ta = doc.querySelector('#importArea');

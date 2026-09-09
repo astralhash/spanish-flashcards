@@ -1180,121 +1180,6 @@
     });
   }
 
-  /* Import an audio package (the offline build tool's output folder): write
-     each downloaded <key>.ogg/.webm/.wav straight into the OPFS tts-cache +
-     memory LRU, so a word that matches this voice/rate combo plays instantly
-     with no model load and no in-browser synthesis. Files already in the cache
-     are skipped (cheap re-import). No OPFS (e.g. file://) → memory-only, so the
-     session still benefits. Resolves to { imported, skipped, meta }; never
-     rejects. `files` is an array of File-like objects ({name, arrayBuffer}).
-     The package's `index.json` manifest (if present) is parsed and recorded as
-     the package metadata — voice/rate the cache was built for — so the UI can
-     say which voice the imported cache belongs to and warn when the user picks
-     a different one. */
-  var pkgMeta = null;   /* { voice, rate, rateKey, bitrateKbps, count } or null */
-  var PKG_META_FILE = 'package-meta.json';
-  function pkgMetaPut(meta) {
-    pkgMeta = meta;
-    if (!meta) return wordDir().then(function (dir) {
-      if (!dir) return;
-      return dir.removeEntry(PKG_META_FILE).catch(function () {});
-    });
-    var blob = new Blob([JSON.stringify(meta)], { type: 'application/json' });
-    return wordDir().then(function (dir) {
-      if (!dir) return;
-      return dir.getFileHandle(PKG_META_FILE, { create: true }).then(function (f) {
-        return f.createWritable().then(function (w) {
-          return w.write(blob).then(function () { return w.close(); });
-        });
-      }).catch(function () {});
-    });
-  }
-  function pkgMetaGet() {
-    if (pkgMeta) return Promise.resolve(pkgMeta);
-    return wordDir().then(function (dir) {
-      if (!dir) return null;
-      return wordFileGet(dir, PKG_META_FILE).then(function (f) {
-        if (!f) return null;
-        return f.arrayBuffer().then(function (buf) {
-          try { pkgMeta = JSON.parse(new TextDecoder().decode(buf)); } catch (e) { pkgMeta = null; }
-          return pkgMeta;
-        });
-      }).catch(function () { return null; });
-    }).catch(function () { return null; });
-  }
-  /* Which voice/rate is the currently-imported audio package built for?
-     Resolves to the manifest ({voice, rate, rateKey, bitrateKbps, count}) or
-     null when no package has been imported. */
-  function packageInfo() { return pkgMetaGet(); }
-
-  function importWordCache(files) {
-    var wanted = [], metaFile = null, i;
-    for (i = 0; i < files.length; i++) {
-      var f = files[i];
-      if (!f || !f.name) continue;
-      var n = String(f.name);
-      if (n === 'index.json') { metaFile = f; continue; }
-      if (n.indexOf('st2-') !== 0) continue;
-      if (!(n.slice(-5) === '.webm' || n.slice(-4) === '.ogg' || n.slice(-4) === '.wav')) continue;
-      wanted.push(f);
-    }
-    if (!wanted.length) return Promise.resolve({ imported: 0, skipped: 0, meta: null });
-    return wordDir().then(function (dir) {
-      var imported = 0, skipped = 0, ops = [];
-      function putOne(f) {
-        var ext = f.name.slice(-5) === '.webm' ? '.webm' : f.name.slice(-4) === '.ogg' ? '.ogg' : '.wav';
-        var key = f.name.slice(0, f.name.length - ext.length);
-        var hitP = dir ? wordFileGet(dir, f.name).then(function (existing) { return !!existing; }) : Promise.resolve(false);
-        return hitP.then(function (already) {
-          if (already) { skipped++; return; }
-          if (wordMemGet(key)) { skipped++; return; }
-          return f.arrayBuffer().then(function (buf) {
-            var blob = new Blob([buf]);
-            return wordCachePut(key, blob, ext).then(function (ok) {
-              if (!ok) wordMemPut(key, blob);   /* no OPFS: keep it in the session LRU */
-              imported++;
-            });
-          });
-        });
-      }
-      for (i = 0; i < wanted.length; i++) ops.push(putOne(wanted[i]));
-      var metaP = metaFile
-        ? metaFile.arrayBuffer().then(function (buf) {
-            try { return JSON.parse(new TextDecoder().decode(buf)); } catch (e) { return null; }
-          })
-        : Promise.resolve(null);
-      return Promise.all([Promise.all(ops), metaP]).then(function (r) {
-        var meta = r[1];
-        if (meta && meta.voice) {
-          if (meta.files) meta.count = meta.files.length;
-          if (typeof meta.rate === 'number') meta.rateKey = Number(meta.rate).toFixed(2);
-          return pkgMetaPut(meta).then(function () { return { imported: imported, skipped: skipped, meta: meta }; });
-        }
-        /* no manifest — derive the voice from the key prefix
-           (`st2-<VOICE>-<hash>`); keep any known rate so a manifest-less
-           re-import doesn't erase the package's rate */
-        var voices = {};
-        for (i = 0; i < wanted.length; i++) {
-          var m = /^st2-([FM][1-5])-/.exec(wanted[i].name);
-          if (m) voices[m[1]] = true;
-        }
-        var vlist = Object.keys(voices);
-        if (vlist.length) {
-          var existing = pkgMeta;
-          var derived = {
-            voice: vlist.length === 1 ? vlist[0] : vlist.join('/'),
-            rate: existing && existing.rate != null ? existing.rate : null,
-            rateKey: existing && existing.rateKey ? existing.rateKey : null,
-            count: wanted.length
-          };
-          return pkgMetaPut(derived).then(function () { return { imported: imported, skipped: skipped, meta: derived }; });
-        }
-        pkgMetaPut(null);
-        return { imported: imported, skipped: skipped, meta: null };
-      });
-    }).catch(function () { return { imported: 0, skipped: 0, meta: null }; });
-  }
-
   /* ================= engine: Piper (vits-web) ================= */
   var piper = {
     mod: null, modP: null,
@@ -1548,7 +1433,6 @@
      of deleted files; best-effort, never rejects. */
   function clearWordCache() {
     wordMem.clear();
-    pkgMeta = null;
     return wordDir().then(function (dir) {
       if (!dir || !dir.values) return 0;
       var it = dir.values(), n = 0;
@@ -1556,9 +1440,6 @@
         return it.next().then(function (r) {
           if (r.done) return n;
           var name = r.value && r.value.name;
-          if (name === PKG_META_FILE) {
-            return dir.removeEntry(name).catch(function () {}).then(next);
-          }
           if (name && (name.indexOf('st-') === 0 || name.indexOf('st2-') === 0) &&
               (name.slice(-5) === '.webm' || name.slice(-4) === '.ogg' || name.slice(-4) === '.wav')) {
             n++;
@@ -1616,8 +1497,6 @@
     prefetch: prefetch,
     warmCache: warmCache,
     hasCachedWord: hasCachedWord,
-    importWordCache: importWordCache,
-    packageInfo: packageInfo,
     stored: storedList,
     clearWordCache: clearWordCache,
     cacheStats: wordCacheStats,

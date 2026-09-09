@@ -412,9 +412,6 @@ kbd {
 .warm-actions { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .warm-cache-row .warm-cancel { padding: 6px 10px; font-size: .78rem; }
 .warm-cache-row #clearCacheBtn:disabled { opacity: .5; cursor: default; }
-#pkgInfo { display: block; margin-top: 4px; }
-#pkgInfo.pkg-ok { color: var(--ok); }
-#pkgInfo.pkg-warn { color: var(--warn); }
 .field select, select {
   width: 100%; font: inherit; font-weight: 650; font-size: .88rem;
   color: var(--text); background: var(--surface);
@@ -948,12 +945,9 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
             <div class="warm-cache-row">
               <span id="cacheStats" class="muted small">Cached audio: —</span>
               <span class="warm-actions">
-                <button id="loadPkgBtn" class="ghost warm-cancel" title="Import the downloaded audio package folder (build with scripts/tts-package/build.mjs) into the cache">📦 Load audio package</button>
                 <button id="clearCacheBtn" class="ghost warm-cancel" title="Delete every cached word audio (all voices)">🗑️ Clear cache</button>
               </span>
             </div>
-            <span id="pkgInfo" class="muted small" hidden></span>
-            <input type="file" id="pkgPicker" webkitdirectory directory multiple hidden>
             <span id="modelStatus" class="muted small"></span>
           </div>
         </div>
@@ -3512,121 +3506,6 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
     });
   }
 
-  /* Import an audio package (the offline build tool's output folder): write
-     each downloaded <key>.ogg/.webm/.wav straight into the OPFS tts-cache +
-     memory LRU, so a word that matches this voice/rate combo plays instantly
-     with no model load and no in-browser synthesis. Files already in the cache
-     are skipped (cheap re-import). No OPFS (e.g. file://) → memory-only, so the
-     session still benefits. Resolves to { imported, skipped, meta }; never
-     rejects. `files` is an array of File-like objects ({name, arrayBuffer}).
-     The package's `index.json` manifest (if present) is parsed and recorded as
-     the package metadata — voice/rate the cache was built for — so the UI can
-     say which voice the imported cache belongs to and warn when the user picks
-     a different one. */
-  var pkgMeta = null;   /* { voice, rate, rateKey, bitrateKbps, count } or null */
-  var PKG_META_FILE = 'package-meta.json';
-  function pkgMetaPut(meta) {
-    pkgMeta = meta;
-    if (!meta) return wordDir().then(function (dir) {
-      if (!dir) return;
-      return dir.removeEntry(PKG_META_FILE).catch(function () {});
-    });
-    var blob = new Blob([JSON.stringify(meta)], { type: 'application/json' });
-    return wordDir().then(function (dir) {
-      if (!dir) return;
-      return dir.getFileHandle(PKG_META_FILE, { create: true }).then(function (f) {
-        return f.createWritable().then(function (w) {
-          return w.write(blob).then(function () { return w.close(); });
-        });
-      }).catch(function () {});
-    });
-  }
-  function pkgMetaGet() {
-    if (pkgMeta) return Promise.resolve(pkgMeta);
-    return wordDir().then(function (dir) {
-      if (!dir) return null;
-      return wordFileGet(dir, PKG_META_FILE).then(function (f) {
-        if (!f) return null;
-        return f.arrayBuffer().then(function (buf) {
-          try { pkgMeta = JSON.parse(new TextDecoder().decode(buf)); } catch (e) { pkgMeta = null; }
-          return pkgMeta;
-        });
-      }).catch(function () { return null; });
-    }).catch(function () { return null; });
-  }
-  /* Which voice/rate is the currently-imported audio package built for?
-     Resolves to the manifest ({voice, rate, rateKey, bitrateKbps, count}) or
-     null when no package has been imported. */
-  function packageInfo() { return pkgMetaGet(); }
-
-  function importWordCache(files) {
-    var wanted = [], metaFile = null, i;
-    for (i = 0; i < files.length; i++) {
-      var f = files[i];
-      if (!f || !f.name) continue;
-      var n = String(f.name);
-      if (n === 'index.json') { metaFile = f; continue; }
-      if (n.indexOf('st2-') !== 0) continue;
-      if (!(n.slice(-5) === '.webm' || n.slice(-4) === '.ogg' || n.slice(-4) === '.wav')) continue;
-      wanted.push(f);
-    }
-    if (!wanted.length) return Promise.resolve({ imported: 0, skipped: 0, meta: null });
-    return wordDir().then(function (dir) {
-      var imported = 0, skipped = 0, ops = [];
-      function putOne(f) {
-        var ext = f.name.slice(-5) === '.webm' ? '.webm' : f.name.slice(-4) === '.ogg' ? '.ogg' : '.wav';
-        var key = f.name.slice(0, f.name.length - ext.length);
-        var hitP = dir ? wordFileGet(dir, f.name).then(function (existing) { return !!existing; }) : Promise.resolve(false);
-        return hitP.then(function (already) {
-          if (already) { skipped++; return; }
-          if (wordMemGet(key)) { skipped++; return; }
-          return f.arrayBuffer().then(function (buf) {
-            var blob = new Blob([buf]);
-            return wordCachePut(key, blob, ext).then(function (ok) {
-              if (!ok) wordMemPut(key, blob);   /* no OPFS: keep it in the session LRU */
-              imported++;
-            });
-          });
-        });
-      }
-      for (i = 0; i < wanted.length; i++) ops.push(putOne(wanted[i]));
-      var metaP = metaFile
-        ? metaFile.arrayBuffer().then(function (buf) {
-            try { return JSON.parse(new TextDecoder().decode(buf)); } catch (e) { return null; }
-          })
-        : Promise.resolve(null);
-      return Promise.all([Promise.all(ops), metaP]).then(function (r) {
-        var meta = r[1];
-        if (meta && meta.voice) {
-          if (meta.files) meta.count = meta.files.length;
-          if (typeof meta.rate === 'number') meta.rateKey = Number(meta.rate).toFixed(2);
-          return pkgMetaPut(meta).then(function () { return { imported: imported, skipped: skipped, meta: meta }; });
-        }
-        /* no manifest — derive the voice from the key prefix
-           (`st2-<VOICE>-<hash>`); keep any known rate so a manifest-less
-           re-import doesn't erase the package's rate */
-        var voices = {};
-        for (i = 0; i < wanted.length; i++) {
-          var m = /^st2-([FM][1-5])-/.exec(wanted[i].name);
-          if (m) voices[m[1]] = true;
-        }
-        var vlist = Object.keys(voices);
-        if (vlist.length) {
-          var existing = pkgMeta;
-          var derived = {
-            voice: vlist.length === 1 ? vlist[0] : vlist.join('/'),
-            rate: existing && existing.rate != null ? existing.rate : null,
-            rateKey: existing && existing.rateKey ? existing.rateKey : null,
-            count: wanted.length
-          };
-          return pkgMetaPut(derived).then(function () { return { imported: imported, skipped: skipped, meta: derived }; });
-        }
-        pkgMetaPut(null);
-        return { imported: imported, skipped: skipped, meta: null };
-      });
-    }).catch(function () { return { imported: 0, skipped: 0, meta: null }; });
-  }
-
   /* ================= engine: Piper (vits-web) ================= */
   var piper = {
     mod: null, modP: null,
@@ -3880,7 +3759,6 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
      of deleted files; best-effort, never rejects. */
   function clearWordCache() {
     wordMem.clear();
-    pkgMeta = null;
     return wordDir().then(function (dir) {
       if (!dir || !dir.values) return 0;
       var it = dir.values(), n = 0;
@@ -3888,9 +3766,6 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
         return it.next().then(function (r) {
           if (r.done) return n;
           var name = r.value && r.value.name;
-          if (name === PKG_META_FILE) {
-            return dir.removeEntry(name).catch(function () {}).then(next);
-          }
           if (name && (name.indexOf('st-') === 0 || name.indexOf('st2-') === 0) &&
               (name.slice(-5) === '.webm' || name.slice(-4) === '.ogg' || name.slice(-4) === '.wav')) {
             n++;
@@ -3948,8 +3823,6 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
     prefetch: prefetch,
     warmCache: warmCache,
     hasCachedWord: hasCachedWord,
-    importWordCache: importWordCache,
-    packageInfo: packageInfo,
     stored: storedList,
     clearWordCache: clearWordCache,
     cacheStats: wordCacheStats,
@@ -5545,71 +5418,12 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
       }).catch(function () {});
     }
   }
-  /* The imported audio package is built for ONE voice+rate. When the selected
-     Supertonic voice/rate matches, the cache is fully usable; when it doesn't,
-     every word will be re-synthesized on demand (the cached files belong to
-     another voice/rate). Show which voice the package is for and flag the
-     mismatch so the learner isn't surprised that the cache "doesn't work". */
-  /* An immediate toast when the user switches voice/rate away from the voice the
-     imported package was built for — the cache stops applying and words will be
-     TTS'd on demand. The persistent #pkgInfo line above explains it in full. */
-  function warnPkgMismatch() {
-    if (!window.NeuralTTS || !window.NeuralTTS.packageInfo || !settings.hd) return;
-    NeuralTTS.packageInfo().then(function (meta) {
-      if (!meta) return;
-      var curMeta = NeuralTTS.voices[settings.hdVoice] || {};
-      var curVoiceNative = curMeta.voice || String(settings.hdVoice).replace(/^st-/, '');
-      var curRate = (Number(settings.rate) || 1).toFixed(2);
-      var matches = curMeta.engine === 'supertonic' &&
-        curVoiceNative === meta.voice &&
-        (!meta.rateKey || meta.rateKey === curRate);
-      if (matches) return;
-      toast('⚠ The cached audio is for Supertonic ' + meta.voice +
-        (meta.rateKey ? ' @ ' + meta.rateKey : '') +
-        ' — this voice will be synthesized on demand instead. Load a matching package or pre-heat.');
-    }).catch(function () {});
-  }
-  function renderPkgInfo() {
-    var node = $('#pkgInfo');
-    if (!node) return;
-    if (!window.NeuralTTS || !window.NeuralTTS.packageInfo || !settings.hd || !warmEngineOk()) {
-      node.hidden = true;
-      return;
-    }
-    NeuralTTS.packageInfo().then(function (meta) {
-      if (!meta) { node.hidden = true; return; }
-      var metaVoice = NeuralTTS.voices['st-' + meta.voice] || null;
-      var vName = (metaVoice && metaVoice.label) || ('Supertonic ' + meta.voice);
-      var rateStr = meta.rateKey ? ' @ ' + meta.rateKey : '';
-      var curVoice = settings.hdVoice;
-      var curMeta = NeuralTTS.voices[curVoice] || {};
-      var curVoiceNative = (curMeta.voice || String(curVoice).replace(/^st-/, ''));
-      var curRate = (Number(settings.rate) || 1).toFixed(2);
-      var matches = curMeta.engine === 'supertonic' &&
-        curVoiceNative === meta.voice &&
-        (!meta.rateKey || meta.rateKey === curRate);
-      if (matches) {
-        node.hidden = false;
-        node.className = 'muted small pkg-ok';
-        node.textContent = '✓ Imported audio package matches: ' + vName + rateStr +
-          ' — every word plays instantly.';
-      } else {
-        node.hidden = false;
-        node.className = 'muted small pkg-warn';
-        node.textContent = '⚠ Imported audio package is for ' + vName + rateStr +
-          ', but the selected voice is ' + (curMeta.label || curVoice) +
-          ' — the cached files do not apply, so words will be synthesized on demand again.' +
-          ' Load a package for this voice (or pre-heat) to cache them.';
-      }
-    }).catch(function () { node.hidden = true; });
-  }
   function renderWarm() {
     var box = $('#warmBox'), btn = $('#warmBtn');
     if (!box || !btn) return;
     var ok = !!settings.hd && warmEngineOk();
     box.hidden = !ok;
     refreshCacheStats();
-    renderPkgInfo();
     if (!ok) return;
     var running = !!warmJob;
     btn.disabled = running;
@@ -5755,54 +5569,6 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
       toast('Word audio cache cleared');
     }).catch(function () {});
   }
-  /* Import a pre-built audio package (folder next to index.html, produced by
-     scripts/tts-package/build.mjs): the directory picker hands back every
-     file, which is copied into the OPFS tts-cache. Package files carry the
-     exact Supertonic cache keys, so a word that matches the selected voice and
-     rate plays instantly — no model download, no in-browser warm needed. */
-  function loadAudioPackage() {
-    if (warmJob || aheadJob) { toast('Wait for the warm to finish first'); return; }
-    if (!window.NeuralTTS || !window.NeuralTTS.importWordCache) { toast('Audio package import unavailable'); return; }
-    var picker = $('#pkgPicker');
-    if (!picker || !picker.files) { toast('This browser cannot pick folders'); return; }
-    $('#warmMsg').textContent = 'Importing audio package…';
-    NeuralTTS.importWordCache(picker.files).then(function (res) {
-      picker.value = '';                 /* allow re-importing the same folder */
-      var msg = '✓ Imported ' + res.imported + ' audio file(s)' +
-        (res.skipped ? ' · ' + res.skipped + ' already cached' : '');
-      /* A package is built for exactly one Supertonic voice+rate. Switch the
-         selection to match so the freshly imported cache applies immediately
-         instead of sitting unused (the old default voice would miss it). */
-      if (res.meta && res.meta.voice) {
-        msg += ' — package: Supertonic ' + res.meta.voice +
-          (res.meta.rateKey ? ' @ ' + res.meta.rateKey : '');
-        var voiceId = 'st-' + res.meta.voice;
-        var switched = false;
-        if (NeuralTTS.voices[voiceId]) {
-          settings.hd = true;
-          settings.hdEngine = 'supertonic';
-          settings.hdVoice = voiceId;
-          if (res.meta.rateKey) {
-            var r = Number(res.meta.rateKey);
-            if (r >= 0.7 && r <= 2.0) { settings.rate = r; switched = true; }
-          }
-          saveSettings();
-          if (window.NeuralTTS) NeuralTTS.stop();
-          fillVoiceUI();             /* re-render the model/voice pickers + sliders */
-          switched = true;
-        }
-        if (switched) msg += ' — switched to ' + voiceId +
-          (res.meta.rateKey ? ' @ ' + res.meta.rateKey : '');
-      }
-      $('#warmMsg').textContent = msg;
-      refreshCacheStats();
-      renderWarm();
-      toast(msg);
-    }).catch(function () {
-      $('#warmMsg').textContent = '⚠ Import failed';
-    });
-  }
-
   function doImport() {
     var text = $('#importArea').value;
     if (!text.trim()) { $('#importMsg').textContent = 'Paste words first.'; return; }
@@ -5986,9 +5752,6 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
       $('#setRateVal').textContent = $('#setRate').value + '%';
       saveSettings();
     });
-    $('#setRate').addEventListener('change', function () {
-      warnPkgMismatch();        /* a package cached at another rate? */
-    });
     $('#setHd').addEventListener('change', function () {
       settings.hd = $('#setHd').checked;
       saveSettings();
@@ -6008,7 +5771,6 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
       settings.hdVoice = $('#setHdVoice').value;
       saveSettings();
       renderWarm();
-      warnPkgMismatch();        /* switching away from the package voice? */
       previewVoice();           /* hear the default voice of the new model */
     });
     $('#setHdVoice').addEventListener('change', function () {
@@ -6016,14 +5778,11 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
       saveSettings();
       if (window.NeuralTTS) NeuralTTS.stop();
       renderWarm();
-      warnPkgMismatch();        /* switching away from the package voice? */
       previewVoice();           /* hear the newly picked HD voice */
     });
     $('#warmBtn').addEventListener('click', function () { this.blur(); startWarm(); });
     $('#warmCancel').addEventListener('click', function () { this.blur(); cancelWarm(); });
     $('#clearCacheBtn').addEventListener('click', function () { this.blur(); clearCache(); });
-    $('#loadPkgBtn').addEventListener('click', function () { this.blur(); $('#pkgPicker').click(); });
-    $('#pkgPicker').addEventListener('change', loadAudioPackage);
     $('#importBtn').addEventListener('click', doImport);
     $('#resetProgress').addEventListener('click', function () {
       if (!confirm('Reset all learning progress? Imported words stay.')) return;

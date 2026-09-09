@@ -1565,71 +1565,12 @@
       }).catch(function () {});
     }
   }
-  /* The imported audio package is built for ONE voice+rate. When the selected
-     Supertonic voice/rate matches, the cache is fully usable; when it doesn't,
-     every word will be re-synthesized on demand (the cached files belong to
-     another voice/rate). Show which voice the package is for and flag the
-     mismatch so the learner isn't surprised that the cache "doesn't work". */
-  /* An immediate toast when the user switches voice/rate away from the voice the
-     imported package was built for — the cache stops applying and words will be
-     TTS'd on demand. The persistent #pkgInfo line above explains it in full. */
-  function warnPkgMismatch() {
-    if (!window.NeuralTTS || !window.NeuralTTS.packageInfo || !settings.hd) return;
-    NeuralTTS.packageInfo().then(function (meta) {
-      if (!meta) return;
-      var curMeta = NeuralTTS.voices[settings.hdVoice] || {};
-      var curVoiceNative = curMeta.voice || String(settings.hdVoice).replace(/^st-/, '');
-      var curRate = (Number(settings.rate) || 1).toFixed(2);
-      var matches = curMeta.engine === 'supertonic' &&
-        curVoiceNative === meta.voice &&
-        (!meta.rateKey || meta.rateKey === curRate);
-      if (matches) return;
-      toast('⚠ The cached audio is for Supertonic ' + meta.voice +
-        (meta.rateKey ? ' @ ' + meta.rateKey : '') +
-        ' — this voice will be synthesized on demand instead. Load a matching package or pre-heat.');
-    }).catch(function () {});
-  }
-  function renderPkgInfo() {
-    var node = $('#pkgInfo');
-    if (!node) return;
-    if (!window.NeuralTTS || !window.NeuralTTS.packageInfo || !settings.hd || !warmEngineOk()) {
-      node.hidden = true;
-      return;
-    }
-    NeuralTTS.packageInfo().then(function (meta) {
-      if (!meta) { node.hidden = true; return; }
-      var metaVoice = NeuralTTS.voices['st-' + meta.voice] || null;
-      var vName = (metaVoice && metaVoice.label) || ('Supertonic ' + meta.voice);
-      var rateStr = meta.rateKey ? ' @ ' + meta.rateKey : '';
-      var curVoice = settings.hdVoice;
-      var curMeta = NeuralTTS.voices[curVoice] || {};
-      var curVoiceNative = (curMeta.voice || String(curVoice).replace(/^st-/, ''));
-      var curRate = (Number(settings.rate) || 1).toFixed(2);
-      var matches = curMeta.engine === 'supertonic' &&
-        curVoiceNative === meta.voice &&
-        (!meta.rateKey || meta.rateKey === curRate);
-      if (matches) {
-        node.hidden = false;
-        node.className = 'muted small pkg-ok';
-        node.textContent = '✓ Imported audio package matches: ' + vName + rateStr +
-          ' — every word plays instantly.';
-      } else {
-        node.hidden = false;
-        node.className = 'muted small pkg-warn';
-        node.textContent = '⚠ Imported audio package is for ' + vName + rateStr +
-          ', but the selected voice is ' + (curMeta.label || curVoice) +
-          ' — the cached files do not apply, so words will be synthesized on demand again.' +
-          ' Load a package for this voice (or pre-heat) to cache them.';
-      }
-    }).catch(function () { node.hidden = true; });
-  }
   function renderWarm() {
     var box = $('#warmBox'), btn = $('#warmBtn');
     if (!box || !btn) return;
     var ok = !!settings.hd && warmEngineOk();
     box.hidden = !ok;
     refreshCacheStats();
-    renderPkgInfo();
     if (!ok) return;
     var running = !!warmJob;
     btn.disabled = running;
@@ -1775,54 +1716,6 @@
       toast('Word audio cache cleared');
     }).catch(function () {});
   }
-  /* Import a pre-built audio package (folder next to index.html, produced by
-     scripts/tts-package/build.mjs): the directory picker hands back every
-     file, which is copied into the OPFS tts-cache. Package files carry the
-     exact Supertonic cache keys, so a word that matches the selected voice and
-     rate plays instantly — no model download, no in-browser warm needed. */
-  function loadAudioPackage() {
-    if (warmJob || aheadJob) { toast('Wait for the warm to finish first'); return; }
-    if (!window.NeuralTTS || !window.NeuralTTS.importWordCache) { toast('Audio package import unavailable'); return; }
-    var picker = $('#pkgPicker');
-    if (!picker || !picker.files) { toast('This browser cannot pick folders'); return; }
-    $('#warmMsg').textContent = 'Importing audio package…';
-    NeuralTTS.importWordCache(picker.files).then(function (res) {
-      picker.value = '';                 /* allow re-importing the same folder */
-      var msg = '✓ Imported ' + res.imported + ' audio file(s)' +
-        (res.skipped ? ' · ' + res.skipped + ' already cached' : '');
-      /* A package is built for exactly one Supertonic voice+rate. Switch the
-         selection to match so the freshly imported cache applies immediately
-         instead of sitting unused (the old default voice would miss it). */
-      if (res.meta && res.meta.voice) {
-        msg += ' — package: Supertonic ' + res.meta.voice +
-          (res.meta.rateKey ? ' @ ' + res.meta.rateKey : '');
-        var voiceId = 'st-' + res.meta.voice;
-        var switched = false;
-        if (NeuralTTS.voices[voiceId]) {
-          settings.hd = true;
-          settings.hdEngine = 'supertonic';
-          settings.hdVoice = voiceId;
-          if (res.meta.rateKey) {
-            var r = Number(res.meta.rateKey);
-            if (r >= 0.7 && r <= 2.0) { settings.rate = r; switched = true; }
-          }
-          saveSettings();
-          if (window.NeuralTTS) NeuralTTS.stop();
-          fillVoiceUI();             /* re-render the model/voice pickers + sliders */
-          switched = true;
-        }
-        if (switched) msg += ' — switched to ' + voiceId +
-          (res.meta.rateKey ? ' @ ' + res.meta.rateKey : '');
-      }
-      $('#warmMsg').textContent = msg;
-      refreshCacheStats();
-      renderWarm();
-      toast(msg);
-    }).catch(function () {
-      $('#warmMsg').textContent = '⚠ Import failed';
-    });
-  }
-
   function doImport() {
     var text = $('#importArea').value;
     if (!text.trim()) { $('#importMsg').textContent = 'Paste words first.'; return; }
@@ -2006,9 +1899,6 @@
       $('#setRateVal').textContent = $('#setRate').value + '%';
       saveSettings();
     });
-    $('#setRate').addEventListener('change', function () {
-      warnPkgMismatch();        /* a package cached at another rate? */
-    });
     $('#setHd').addEventListener('change', function () {
       settings.hd = $('#setHd').checked;
       saveSettings();
@@ -2028,7 +1918,6 @@
       settings.hdVoice = $('#setHdVoice').value;
       saveSettings();
       renderWarm();
-      warnPkgMismatch();        /* switching away from the package voice? */
       previewVoice();           /* hear the default voice of the new model */
     });
     $('#setHdVoice').addEventListener('change', function () {
@@ -2036,14 +1925,11 @@
       saveSettings();
       if (window.NeuralTTS) NeuralTTS.stop();
       renderWarm();
-      warnPkgMismatch();        /* switching away from the package voice? */
       previewVoice();           /* hear the newly picked HD voice */
     });
     $('#warmBtn').addEventListener('click', function () { this.blur(); startWarm(); });
     $('#warmCancel').addEventListener('click', function () { this.blur(); cancelWarm(); });
     $('#clearCacheBtn').addEventListener('click', function () { this.blur(); clearCache(); });
-    $('#loadPkgBtn').addEventListener('click', function () { this.blur(); $('#pkgPicker').click(); });
-    $('#pkgPicker').addEventListener('change', loadAudioPackage);
     $('#importBtn').addEventListener('click', doImport);
     $('#resetProgress').addEventListener('click', function () {
       if (!confirm('Reset all learning progress? Imported words stay.')) return;
