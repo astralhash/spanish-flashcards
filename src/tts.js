@@ -439,6 +439,10 @@
   var supersonic = {
     ort: null, ortP: null,
     ready: null,                 /* promise -> this, once sessions exist */
+    compiled: false,             /* true once the INTERACTIVE session set exists —
+                                    rolling warm windows must never pay the first
+                                    compile themselves (the reveal must win the
+                                    shared compileSlot lock) */
     ep: '',                      /* active execution provider */
     dp: null, te: null, ve: null, voc: null,
     cfgs: null, indexer: null,
@@ -611,12 +615,14 @@
           });
           return chain.then(function () {
             setStatus('ready', '');
+            self.compiled = true;
           });
         });
       }).then(function () {
         return self;
       }).catch(function (err) {
         self.ready = null;       /* allow a retry (e.g. back online) */
+        self.compiled = false;
         throw err;
       });
     },
@@ -782,12 +788,18 @@
       }).then(function (done) {
         if (done) return done;
         /* Join an in-flight generation of the SAME word (e.g. 🔊 re-clicked
-           while a detached attempt still runs) instead of synthesizing twice. */
+           or the word revealed again while a detached attempt still runs)
+           instead of synthesizing twice. The generation resolves with the
+           freshly synthesized blob + whether the ORIGINAL token already
+           played it; a stale original never plays, so the joiner (whose own
+           token is current) plays it exactly once — before this, the joiner
+           got `play()`'s resolved value (undefined) and silently dropped the
+           narration. */
         var twin = (keyPre && pendingGen && pendingGen.key === keyPre) ? pendingGen.p : null;
         if (twin) {
-          return twin.then(function (blob) {
-            if (mySeq !== seq || !blob) return null;
-            return play(blob, 0).then(function () {
+          return twin.then(function (r) {
+            if (mySeq !== seq || !r || !r.blob || r.played) return null;
+            return play(r.blob, 0).then(function () {
               if (mySeq === seq && st.status !== 'error') setStatus('ready', '');
             });
           }).catch(function (err) {
@@ -803,6 +815,13 @@
         var gate = new Promise(function (r) { release = r; });
         var releaseOnce = function () { if (release) { var f = release; release = null; f(); } };
         var releaseIfStale = function () { if (mySeq !== seq) releaseOnce(); };
+        /* Safety: the queue slot is released at stage boundaries while stale and
+           at the end of the generation otherwise — but a wedged ort proxy could
+           hold a CURRENT generation forever, deadlocking the serialized speak
+           queue (every later narration would silently never run). Bound the
+           hold: after this the generation detaches (still synthesizing +
+           caching), the queue moves on. */
+        setTimeout(releaseOnce, GATE_MAX_MS);
         setStatus('loading', 'loading Supertonic voice model…');
         var gen = self.ensure().then(function () {
           releaseIfStale();
@@ -819,8 +838,12 @@
           var wav = out.wav, sr = out.sr;
           var blob = wavBlob(wav, sr);   /* first use plays the WAV right away… */
           if (keyPre) wordCacheStore(keyPre, wav, sr, blob);   /* …while Opus is encoded in the background */
-          if (mySeq !== seq) return null;   /* learner moved on: cached, never played */
-          return play(blob, 0);   /* native speed already applied */
+          /* play detached (the queue slot releases via gate below — playback
+             doesn't need it); the resolved value tells a joiner whether the
+             sample was already played for the ORIGINAL token */
+          var played = mySeq === seq;
+          if (played) play(blob, 0);   /* native speed already applied */
+          return { blob: blob, played: played };
         });
         if (keyPre) {
           pendingGen = { key: keyPre, p: gen };   /* re-clicks join this instead of re-synthesizing */
@@ -961,6 +984,9 @@
   var WORD_KBPS = 48;   /* Opus encode bitrate; baked into the key so a bump
                            re-keys the cache instead of replaying old blobs */
   var WORD_MEM_MAX = 300;
+  var GATE_MAX_MS = 120000;   /* bound on how long ONE first-use generation may
+                                 hold the serialized speak queue (a wedged engine
+                                 must not deadlock narration forever) */
   var pendingGen = null;   /* { key, p } in-flight first-use generation: a
                               re-click joins it instead of synthesizing twice */
   var wordMem = new Map();   /* key -> Blob (this session; no OPFS round-trip) */
@@ -1289,11 +1315,14 @@
      (it used to stall at "N-1 remaining" when the proxy died mid-run), and a
      run of consecutive failures aborts the batch with a clear error instead of
      burning the whole list. opts.wait (optional) is awaited before each word
-     so a caller can yield to quiz narration — the word the learner is waiting
-     for must never queue behind a warm word in the shared ort proxy worker.
-     Resolves to { done, skipped, failed, total, percent }; the promise also
-     carries a .cancel() that stops the batch after the current in-flight
-     word. */
+      so a caller can yield to quiz narration — the word the learner is waiting
+      for must never queue behind a warm word in the shared ort proxy worker.
+      With opts.onlyIfReady (rolling windows) the whole batch is skipped while
+      the INTERACTIVE Supertonic session set doesn't exist yet: the window must
+      never pay the first compile, a reveal needs to win the compile lock.
+      Resolves to { done, skipped, failed, total, percent }; the promise also
+      carries a .cancel() that stops the batch after the current in-flight
+      word. */
 
   /* Reject if the underlying promise neither resolves nor rejects in time.
      The orphaned promise is simply abandoned (it can never be cancelled), but
@@ -1328,6 +1357,8 @@
       return Promise.resolve(empty);
     }
     var i = 0, done = 0, skipped = 0, failed = 0, stopped = false;
+    var onlyIfReady = !!opts.onlyIfReady;   /* rolling windows: skip while the
+                                               interactive engine is uncompiled */
     var broken = null;          /* Error — set when the engine is systematically broken */
     var consecFails = 0, lastErr = null;
     function report() {
@@ -1376,6 +1407,13 @@
     function workerLoop(worker) {
       function next() {
         if (stopped || broken || i >= total) return Promise.resolve();
+        /* Rolling windows must never pay the first compile: if the interactive
+           session set doesn't exist yet, a reveal is imminent and its synthesis
+           must win the shared compileSlot lock — compiling the warm worker
+           here would queue the learner's first word behind a minutes-long
+           compile (silent first reveals). End the window; the next render
+           starts a fresh one once the engine exists. */
+        if (onlyIfReady && !supersonic.compiled) return Promise.resolve();
         var word = String(words[i]); i++;
         return warmOne(worker, word).then(function (res) {
           if (res === 'failed') {

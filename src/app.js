@@ -337,7 +337,9 @@
          compile, and the warm yields between words to quiz narration). */
       if (warmJob) {
         NeuralTTS.hasCachedWord(text, { voice: settings.hdVoice, rate: settings.rate }).then(function (cached) {
-          if (cached) {
+          /* the warm can END while this check is in flight — then there is no
+             batch to defer to anymore and the word must sound normally */
+          if (cached || !warmJob) {
             hdPlay(text).catch(function () {});
           } else if (warmJob && warmJob.prioritize) {
             warmJob.prioritize([text]);   /* the word on screen is wanted now — cache it next */
@@ -1190,15 +1192,21 @@
   }
 
   /* MC rounds advance automatically — but only once the revealed word has been
-     heard: hold the resolution while TTS is talking (capped, in case speech is
-     unavailable or stuck), so the next question never opens mid-word. */
+     heard: hold the resolution while TTS is busy. "Busy" covers synthesis
+     (engine 'loading'), an app-initiated narration still in flight (hdWanted)
+     AND live playback (hdPlaying) — play() resolves at playback START, so the
+     engine status is already 'ready' while the word is still sounding. A
+     first-use Supertonic synthesis can take seconds on WASM, and cutting the
+     wait there would drop the word's audio entirely (the generation detaches
+     and never plays), so the hard cap is generous (10 s) — it only guards a
+     wedged engine or a stuck audio element. */
   function advanceAfterSpeech(minMs) {
     var t0 = Date.now();
     (function tick() {
       if (!challenge) return;                    /* aborted meanwhile */
       var dt = Date.now() - t0;
-      var busy = settings.tts && settings.autoSpeak ? ttsBusy() : false;
-      if (dt >= minMs && (!busy || dt >= 3200)) chAdvance();
+      var busy = settings.tts && settings.autoSpeak ? (ttsBusy() || hdPlaying || hdWanted > 0) : false;
+      if (dt >= minMs && (!busy || dt >= 10000)) chAdvance();
       else setTimeout(tick, 80);
     })();
   }
@@ -1685,7 +1693,11 @@
       });
     };
     var run = function () {
-      var job = NeuralTTS.warmCache(words, { voice: settings.hdVoice, rate: settings.rate, wait: yieldToNarration }, null);
+      /* onlyIfReady: the window never pays the FIRST compile of the model — a
+         cold-start reveal must win the shared compile lock itself, or its
+         narration would queue behind the warm worker's minutes-long compile
+         (silent first cards). */
+      var job = NeuralTTS.warmCache(words, { voice: settings.hdVoice, rate: settings.rate, wait: yieldToNarration, onlyIfReady: true }, null);
       aheadJob = job;
       var settle = function () {
         if (aheadJob === job) aheadJob = null;

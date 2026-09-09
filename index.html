@@ -1263,10 +1263,18 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
   }
   var ES_ART = /^(el|la|los|las|lo|un|una|unos|unas|der|die|das)\s+/;
   var EN_TO = /^to\s+/;
+  var EN_THE = /^the\s+/;
 
   /* drop a leading infinitive "to" from an English gloss, never down to empty */
   function stripTo(s) {
     var r = s.replace(EN_TO, '');
+    return r.length ? r : s;
+  }
+
+  /* drop a leading definite article "the" from an English gloss,
+     never down to empty ("the" alone stays "the") */
+  function stripThe(s) {
+    var r = s.replace(EN_THE, '');
     return r.length ? r : s;
   }
 
@@ -1287,14 +1295,28 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
     return out;
   }
 
+  /* both article conventions are optional on either side — Spanish
+     el/la/un/... as well as an English "the" (glosses vary) */
+  function stripArt(s) {
+    s = s.replace(ES_ART, '').replace(EN_THE, '');
+    return s.replace(ES_ART, '');
+  }
+
   function baseMatch(t, g) {
     if (t === g) return true;
-    var ts = t.replace(ES_ART, '');
-    var gs = g.replace(ES_ART, '');
-    if (!ts.length || !gs.length) return false;
-    var tt = stripTo(ts), gt = stripTo(gs);
-    return ts === g || t === gs || ts === gs ||
-           tt === gs || ts === gt || tt === gt;   /* accept/ignore a leading article or infinitive "to" on either side */
+    var ta = stripArt(t), ga = stripArt(g);
+    var va = [t, ta, stripThe(ta)],
+        vb = [g, ga, stripThe(ga)];
+    if (!ta.length || !ga.length) return false;
+    /* a leading infinitive "to" is optional on either side */
+    var i, j;
+    for (i = 0; i < va.length; i++) {
+      for (j = 0; j < vb.length; j++) {
+        if (va[i] === vb[j]) return true;
+        if (stripTo(va[i]) === stripTo(vb[j])) return true;
+      }
+    }
+    return false;
   }
 
   /* numbers: accept the word or the digits ("ten (10)" <-> "ten" / "10",
@@ -2765,6 +2787,10 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
   var supersonic = {
     ort: null, ortP: null,
     ready: null,                 /* promise -> this, once sessions exist */
+    compiled: false,             /* true once the INTERACTIVE session set exists —
+                                    rolling warm windows must never pay the first
+                                    compile themselves (the reveal must win the
+                                    shared compileSlot lock) */
     ep: '',                      /* active execution provider */
     dp: null, te: null, ve: null, voc: null,
     cfgs: null, indexer: null,
@@ -2937,12 +2963,14 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
           });
           return chain.then(function () {
             setStatus('ready', '');
+            self.compiled = true;
           });
         });
       }).then(function () {
         return self;
       }).catch(function (err) {
         self.ready = null;       /* allow a retry (e.g. back online) */
+        self.compiled = false;
         throw err;
       });
     },
@@ -3108,12 +3136,18 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
       }).then(function (done) {
         if (done) return done;
         /* Join an in-flight generation of the SAME word (e.g. 🔊 re-clicked
-           while a detached attempt still runs) instead of synthesizing twice. */
+           or the word revealed again while a detached attempt still runs)
+           instead of synthesizing twice. The generation resolves with the
+           freshly synthesized blob + whether the ORIGINAL token already
+           played it; a stale original never plays, so the joiner (whose own
+           token is current) plays it exactly once — before this, the joiner
+           got `play()`'s resolved value (undefined) and silently dropped the
+           narration. */
         var twin = (keyPre && pendingGen && pendingGen.key === keyPre) ? pendingGen.p : null;
         if (twin) {
-          return twin.then(function (blob) {
-            if (mySeq !== seq || !blob) return null;
-            return play(blob, 0).then(function () {
+          return twin.then(function (r) {
+            if (mySeq !== seq || !r || !r.blob || r.played) return null;
+            return play(r.blob, 0).then(function () {
               if (mySeq === seq && st.status !== 'error') setStatus('ready', '');
             });
           }).catch(function (err) {
@@ -3129,6 +3163,13 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
         var gate = new Promise(function (r) { release = r; });
         var releaseOnce = function () { if (release) { var f = release; release = null; f(); } };
         var releaseIfStale = function () { if (mySeq !== seq) releaseOnce(); };
+        /* Safety: the queue slot is released at stage boundaries while stale and
+           at the end of the generation otherwise — but a wedged ort proxy could
+           hold a CURRENT generation forever, deadlocking the serialized speak
+           queue (every later narration would silently never run). Bound the
+           hold: after this the generation detaches (still synthesizing +
+           caching), the queue moves on. */
+        setTimeout(releaseOnce, GATE_MAX_MS);
         setStatus('loading', 'loading Supertonic voice model…');
         var gen = self.ensure().then(function () {
           releaseIfStale();
@@ -3145,8 +3186,12 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
           var wav = out.wav, sr = out.sr;
           var blob = wavBlob(wav, sr);   /* first use plays the WAV right away… */
           if (keyPre) wordCacheStore(keyPre, wav, sr, blob);   /* …while Opus is encoded in the background */
-          if (mySeq !== seq) return null;   /* learner moved on: cached, never played */
-          return play(blob, 0);   /* native speed already applied */
+          /* play detached (the queue slot releases via gate below — playback
+             doesn't need it); the resolved value tells a joiner whether the
+             sample was already played for the ORIGINAL token */
+          var played = mySeq === seq;
+          if (played) play(blob, 0);   /* native speed already applied */
+          return { blob: blob, played: played };
         });
         if (keyPre) {
           pendingGen = { key: keyPre, p: gen };   /* re-clicks join this instead of re-synthesizing */
@@ -3287,6 +3332,9 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
   var WORD_KBPS = 48;   /* Opus encode bitrate; baked into the key so a bump
                            re-keys the cache instead of replaying old blobs */
   var WORD_MEM_MAX = 300;
+  var GATE_MAX_MS = 120000;   /* bound on how long ONE first-use generation may
+                                 hold the serialized speak queue (a wedged engine
+                                 must not deadlock narration forever) */
   var pendingGen = null;   /* { key, p } in-flight first-use generation: a
                               re-click joins it instead of synthesizing twice */
   var wordMem = new Map();   /* key -> Blob (this session; no OPFS round-trip) */
@@ -3615,11 +3663,14 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
      (it used to stall at "N-1 remaining" when the proxy died mid-run), and a
      run of consecutive failures aborts the batch with a clear error instead of
      burning the whole list. opts.wait (optional) is awaited before each word
-     so a caller can yield to quiz narration — the word the learner is waiting
-     for must never queue behind a warm word in the shared ort proxy worker.
-     Resolves to { done, skipped, failed, total, percent }; the promise also
-     carries a .cancel() that stops the batch after the current in-flight
-     word. */
+      so a caller can yield to quiz narration — the word the learner is waiting
+      for must never queue behind a warm word in the shared ort proxy worker.
+      With opts.onlyIfReady (rolling windows) the whole batch is skipped while
+      the INTERACTIVE Supertonic session set doesn't exist yet: the window must
+      never pay the first compile, a reveal needs to win the compile lock.
+      Resolves to { done, skipped, failed, total, percent }; the promise also
+      carries a .cancel() that stops the batch after the current in-flight
+      word. */
 
   /* Reject if the underlying promise neither resolves nor rejects in time.
      The orphaned promise is simply abandoned (it can never be cancelled), but
@@ -3654,6 +3705,8 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
       return Promise.resolve(empty);
     }
     var i = 0, done = 0, skipped = 0, failed = 0, stopped = false;
+    var onlyIfReady = !!opts.onlyIfReady;   /* rolling windows: skip while the
+                                               interactive engine is uncompiled */
     var broken = null;          /* Error — set when the engine is systematically broken */
     var consecFails = 0, lastErr = null;
     function report() {
@@ -3702,6 +3755,13 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
     function workerLoop(worker) {
       function next() {
         if (stopped || broken || i >= total) return Promise.resolve();
+        /* Rolling windows must never pay the first compile: if the interactive
+           session set doesn't exist yet, a reveal is imminent and its synthesis
+           must win the shared compileSlot lock — compiling the warm worker
+           here would queue the learner's first word behind a minutes-long
+           compile (silent first reveals). End the window; the next render
+           starts a fresh one once the engine exists. */
+        if (onlyIfReady && !supersonic.compiled) return Promise.resolve();
         var word = String(words[i]); i++;
         return warmOne(worker, word).then(function (res) {
           if (res === 'failed') {
@@ -4190,7 +4250,9 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
          compile, and the warm yields between words to quiz narration). */
       if (warmJob) {
         NeuralTTS.hasCachedWord(text, { voice: settings.hdVoice, rate: settings.rate }).then(function (cached) {
-          if (cached) {
+          /* the warm can END while this check is in flight — then there is no
+             batch to defer to anymore and the word must sound normally */
+          if (cached || !warmJob) {
             hdPlay(text).catch(function () {});
           } else if (warmJob && warmJob.prioritize) {
             warmJob.prioritize([text]);   /* the word on screen is wanted now — cache it next */
@@ -5043,15 +5105,21 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
   }
 
   /* MC rounds advance automatically — but only once the revealed word has been
-     heard: hold the resolution while TTS is talking (capped, in case speech is
-     unavailable or stuck), so the next question never opens mid-word. */
+     heard: hold the resolution while TTS is busy. "Busy" covers synthesis
+     (engine 'loading'), an app-initiated narration still in flight (hdWanted)
+     AND live playback (hdPlaying) — play() resolves at playback START, so the
+     engine status is already 'ready' while the word is still sounding. A
+     first-use Supertonic synthesis can take seconds on WASM, and cutting the
+     wait there would drop the word's audio entirely (the generation detaches
+     and never plays), so the hard cap is generous (10 s) — it only guards a
+     wedged engine or a stuck audio element. */
   function advanceAfterSpeech(minMs) {
     var t0 = Date.now();
     (function tick() {
       if (!challenge) return;                    /* aborted meanwhile */
       var dt = Date.now() - t0;
-      var busy = settings.tts && settings.autoSpeak ? ttsBusy() : false;
-      if (dt >= minMs && (!busy || dt >= 3200)) chAdvance();
+      var busy = settings.tts && settings.autoSpeak ? (ttsBusy() || hdPlaying || hdWanted > 0) : false;
+      if (dt >= minMs && (!busy || dt >= 10000)) chAdvance();
       else setTimeout(tick, 80);
     })();
   }
@@ -5538,7 +5606,11 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
       });
     };
     var run = function () {
-      var job = NeuralTTS.warmCache(words, { voice: settings.hdVoice, rate: settings.rate, wait: yieldToNarration }, null);
+      /* onlyIfReady: the window never pays the FIRST compile of the model — a
+         cold-start reveal must win the shared compile lock itself, or its
+         narration would queue behind the warm worker's minutes-long compile
+         (silent first cards). */
+      var job = NeuralTTS.warmCache(words, { voice: settings.hdVoice, rate: settings.rate, wait: yieldToNarration, onlyIfReady: true }, null);
       aheadJob = job;
       var settle = function () {
         if (aheadJob === job) aheadJob = null;

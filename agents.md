@@ -132,13 +132,21 @@ to hit round totals — exceeding targets is fine.
   click and `.say-btn` is exempt from the "focused control" keydown guards, so
   Space always advances instead of re-triggering audio. Narration belongs to
   the card it was spoken for: `renderCard`/`renderChalQ` cancel stale speech,
-  and challenge MC rounds use `advanceAfterSpeech()` so the next question only
-  appears once the revealed word has finished playing (capped at ~3.2 s).
+   and challenge MC rounds use `advanceAfterSpeech()` so the next question only
+   appears once the revealed word has finished playing. The busy check covers
+   engine status ('loading' = synthesizing), the `hdPlaying` flag (playback —
+   `audio.play()` resolves at playback START, so status alone never sees the
+   playing phase) and `hdWanted` (speak issued but not started yet), capped
+   at 10 s (a first-use Supertonic synthesis can take seconds on WASM; cutting
+   it there detaches the generation and the word never sounds — only a wedged
+   engine/stuck audio element may pass the cap).
   While the Supertonic pre-heat batch is running, the quiz plays **cached
   audio only**: `speak()` in app.js gates on `NeuralTTS.hasCachedWord(text,
   {voice, rate})` (memory or OPFS hit for that voice/rate key) and stays
   silent for uncached words — synthesizing one mid-warm would contend for the
-  single ort proxy worker. An uncached word (and every word of a quiz that
+  single ort proxy worker. The check is asynchronous, so if the warm ENDS while
+  it is in flight the word is spoken normally (`!warmJob` fallback) instead of
+  falling into the silence gap. An uncached word (and every word of a quiz that
   starts mid-warm, via `warmJob.prioritize(esWords)`) jumps to the FRONT of
   the warm queue, so the next reveal plays from cache within moments. The
   warm's own status lines (compiles/downloads) are batch progress: while
@@ -172,7 +180,16 @@ switches — also bumps the token: narration the learner walked away from never
 plays. A stale **Supertonic first-use** generation is not aborted: it releases
 the queue at the next stage boundary and finishes detached (a re-click on the
 same word joins it via a pending-generation registry instead of synthesizing
-twice), still caching the word, just without the play.
+twice), still caching the word — and the joiner plays the freshly synthesized
+blob for its own current token exactly when the original token never played it
+(the gen resolves `{blob, played}`; before this fix a joiner got `play()`'s
+resolved value, undefined, and dropped the narration). The queue hold of one
+first-use generation is bounded (`GATE_MAX_MS`, 120 s): a wedged ort proxy
+must not deadlock the serialized speak queue forever. The rolling prefetch
+window is created with `onlyIfReady: true` and skips entirely while
+`supersonic.compiled` is false — the window must never pay the first compile
+(a reveal needs to win the shared `compileSlot` lock itself; a warm-worker
+compile first = silent first cards for minutes).
 Failures degrade to silence (HD-or-silence policy in `speak()` in app.js).
 HD is strictly opt-in (`settings.hd: false` default).
 
