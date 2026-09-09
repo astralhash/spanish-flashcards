@@ -309,6 +309,16 @@
   }
   refreshVoices();
 
+  /* App-initiated HD speak jobs in flight (synthesizing or playing) — keeps
+     the orb honest even while the rolling prefetch window suppresses the
+     engine's own 'loading' status lines. */
+  var hdWanted = 0;
+  function hdPlay(text) {
+    hdWanted++;
+    var done = function (v) { hdWanted--; return v; };
+    return NeuralTTS.speak(text, { voice: settings.hdVoice, rate: settings.rate })
+      .then(done, function (e) { done(); throw e; });
+  }
   function speak(text) {
     if (!settings.tts) return;
     text = String(text);
@@ -316,23 +326,26 @@
     /* HD selected: HD or silence — no system-voice fallback, even when
        synthesis fails or is superseded by fast card progression. */
     if (window.NeuralTTS) {
-      /* While the pre-heat batch owns the engine, only play words that are
-         already cached — a first-time synthesis would contend for the single
-         ort proxy worker (or even compile a second session set mid-warm).
-         An uncached word stays silent now but jumps to the front of the warm
-         queue, so its next reveal plays from cache. */
+      /* While the full pre-heat batch owns the engine, only play words that
+         are already cached — a first-time synthesis would contend for the
+         single ort proxy worker (or even compile a second session set
+         mid-warm). An uncached word stays silent now but jumps to the front
+         of the warm queue, so its next reveal plays from cache.
+         The rolling n+1 prefetch (aheadJob) never gates: the word on screen
+         must always sound — uncached it synthesizes interactively (the
+         compile lock in tts.js serializes that against the warm worker's
+         compile, and the warm yields between words to quiz narration). */
       if (warmJob) {
         NeuralTTS.hasCachedWord(text, { voice: settings.hdVoice, rate: settings.rate }).then(function (cached) {
           if (cached) {
-            NeuralTTS.speak(text, { voice: settings.hdVoice, rate: settings.rate })
-              .catch(function () {});
+            hdPlay(text).catch(function () {});
           } else if (warmJob && warmJob.prioritize) {
             warmJob.prioritize([text]);   /* the word on screen is wanted now — cache it next */
           }
         });
         return;
       }
-      NeuralTTS.speak(text, { voice: settings.hdVoice, rate: settings.rate })
+      hdPlay(text)
         .catch(function () { /* stay silent; ⚠ status line in settings explains */ });
     }
   }
@@ -461,7 +474,12 @@
        downloads) are batch progress, not quiz narration — the orb stays still.
        Quiz audio during a warm is cached plays only, which the orb follows via
        onHdAudio. Resynced from the live status when the warm ends. */
-    voiceLoading = !warmJob && !!(s && s.status === 'loading');
+    /* Batch 'loading' lines (full pre-heat or the prefetch window's
+       background compile) are not quiz narration — the orb stays still. A
+       real app-initiated synthesis (hdWanted) always shows the spinner,
+       even mid-window. Cached plays keep the orb via onHdAudio. */
+    voiceLoading = hdWanted > 0 ||
+      (!warmJob && !aheadJob && !!(s && s.status === 'loading'));
     voiceSync();
   }
   function onHdAudio(ev) {
@@ -481,7 +499,8 @@
       if (window.speechSynthesis && (window.speechSynthesis.speaking || window.speechSynthesis.pending)) return true;
     } catch (e) {}
     try {
-      /* the pre-heat batch's 'loading' is batch progress, not quiz narration */
+      /* the pre-heat batch's 'loading' is batch progress, not quiz narration;
+         the prefetch window's word syntheses never touch the status at all */
       if (settings.hd && window.NeuralTTS && !warmJob && NeuralTTS.status().status === 'loading') return true;
     } catch (e) {}
     return false;
@@ -703,6 +722,7 @@
     $('#qbarFill').style.width = (sess.i / sess.total * 100) + '%';
 
     sess.curDir = dirOf();
+    prefetchAhead();   /* keep the next words' audio ready while this card is up */
     var useType = settings.ans === 'type' || (settings.ans === 'mix' && Math.random() < 0.5);
     if (useType) { renderTypeCard(e); return; }
     if (settings.pretest && neverSeen(e)) { renderPretest(e); return; }
@@ -1135,6 +1155,7 @@
     }
     $('#chCount').textContent = (challenge.i + 1) + ' / ' + challenge.qs.length;
     $('#chBarFill').style.width = (challenge.i / challenge.qs.length * 100) + '%';
+    prefetchAhead();   /* keep the next questions' audio ready while this one is up */
     var card = $('#chal-q-card');
     if (card) { card.classList.remove('reload'); void card.offsetWidth; card.classList.add('reload'); }
     challenge.locked = false;
@@ -1516,7 +1537,7 @@
       var node = $('#cacheStats');
       if (node) node.textContent = 'Cached audio: ' + fmtBytes(s.bytes) + ' · ' + s.count + ' words';
       var btn = $('#clearCacheBtn');
-      if (btn) btn.disabled = !s.count || !!warmJob;
+      if (btn) btn.disabled = !s.count || !!warmJob || !!aheadJob;
       /* show the resume progress only when the box is on screen (a Supertonic
          voice is selected) — otherwise keep the bar out of the way */
       var box = $('#warmBox');
@@ -1627,39 +1648,47 @@
     if (warmJob) return;
     var words = warmWordList();
     if (!words.length) { toast('No words to warm'); return; }
-    warmCancelled = false;
-    warmProg = { done: 0, skipped: 0, failed: 0, total: words.length, percent: 0 };
-    $('#warmBtn').disabled = true;
-    $('#warmCancel').hidden = false;
-    $('#warmProgress').hidden = false;
-    $('#warmFill').style.width = '0%';
-    $('#warmCount').textContent = '0 / ' + words.length + ' cached';
-    $('#warmMsg').textContent = 'warming…';
-    warmJob = NeuralTTS.warmCache(words, { voice: settings.hdVoice, rate: settings.rate }, function (p) {
-      warmProg = p;
-      $('#warmFill').style.width = (p.percent || 0) + '%';
-      $('#warmCount').textContent = (p.done + p.skipped) + ' / ' + p.total + ' cached';
-      var left = p.total - (p.done + p.skipped + p.failed);
-      $('#warmMsg').textContent = left > 0 ? 'warming… ' + left + ' remaining' : '';
-    }).then(function () {
-      warmJob = null;
-      warmResyncOrb();   /* warm's status lines no longer suppressed — resync the orb */
-      var prog = warmProg || { done: 0, skipped: 0, failed: 0, total: words.length };
-      if (warmCancelled) {
-        $('#warmMsg').textContent = 'Stopped — ' + (prog.done + prog.skipped) + ' / ' + prog.total + ' cached';
-      } else {
-        $('#warmMsg').textContent = prog.failed
-          ? '✓ cached ' + (prog.done + prog.skipped) + ' words · ' + prog.failed + ' failed'
-          : '✓ all ' + prog.total + ' words cached';
-      }
-      renderWarm();
-      if (!warmCancelled) toast('Word audio cache warmed');
-    }).catch(function (err) {
-      warmJob = null;
-      warmResyncOrb();
-      renderWarm();
-      $('#warmMsg').textContent = '⚠ ' + ((err && err.message) || err);
-    });
+    var begin = function () {
+      warmCancelled = false;
+      warmProg = { done: 0, skipped: 0, failed: 0, total: words.length, percent: 0 };
+      $('#warmBtn').disabled = true;
+      $('#warmCancel').hidden = false;
+      $('#warmProgress').hidden = false;
+      $('#warmFill').style.width = '0%';
+      $('#warmCount').textContent = '0 / ' + words.length + ' cached';
+      $('#warmMsg').textContent = 'warming…';
+      warmJob = NeuralTTS.warmCache(words, { voice: settings.hdVoice, rate: settings.rate }, function (p) {
+        warmProg = p;
+        $('#warmFill').style.width = (p.percent || 0) + '%';
+        $('#warmCount').textContent = (p.done + p.skipped) + ' / ' + p.total + ' cached';
+        var left = p.total - (p.done + p.skipped + p.failed);
+        $('#warmMsg').textContent = left > 0 ? 'warming… ' + left + ' remaining' : '';
+      }).then(function () {
+        warmJob = null;
+        warmResyncOrb();   /* warm's status lines no longer suppressed — resync the orb */
+        var prog = warmProg || { done: 0, skipped: 0, failed: 0, total: words.length };
+        if (warmCancelled) {
+          $('#warmMsg').textContent = 'Stopped — ' + (prog.done + prog.skipped) + ' / ' + prog.total + ' cached';
+        } else {
+          $('#warmMsg').textContent = prog.failed
+            ? '✓ cached ' + (prog.done + prog.skipped) + ' words · ' + prog.failed + ' failed'
+            : '✓ all ' + prog.total + ' words cached';
+        }
+        renderWarm();
+        if (!warmCancelled) toast('Word audio cache warmed');
+      }).catch(function (err) {
+        warmJob = null;
+        warmResyncOrb();
+        renderWarm();
+        $('#warmMsg').textContent = '⚠ ' + ((err && err.message) || err);
+      });
+    };
+    if (aheadJob) {
+      if (aheadJob.cancel) aheadJob.cancel();   /* stop the prefetch window after its current word */
+      aheadJob.then(begin, begin);              /* one warm loop on the shared worker at a time */
+    } else {
+      begin();
+    }
   }
   /* the orb ignored the warm's status lines while it ran — after it ends,
      return to honest status-driven display (e.g. a compile left pending) */
@@ -1668,6 +1697,63 @@
       voiceLoading = !!(window.NeuralTTS && NeuralTTS.status().status === 'loading');
     } catch (e) { voiceLoading = false; }
     voiceSync();
+  }
+
+  /* ---- rolling n+1 audio prefetch (Supertonic) ---- */
+  /* While a card or question is on screen, quietly warm the word cache for
+     the UPCOMING ones, so advancing never waits on synthesis. The visible
+     word is deliberately NOT warmed: it always synthesizes interactively when
+     uncached (autoplay must never be dropped — a window word would be too
+     late anyway), and once it has played it is cached for good.
+     Reuses the pre-heat machinery (warmCache: one serial warm worker,
+     watchdogs, skip-if-cached, compile lock, narration yield) on a tiny
+     rolling window instead of the whole deck. Windows are serialized: never
+     two warmCache loops on the shared _warmWorker at once. */
+  var AHEAD_N = 2;            /* upcoming words kept warm */
+  var aheadJob = null;        /* in-flight rolling warmCache window promise */
+  function aheadWords() {
+    var out = [];
+    var add = function (w) { if (w && out.indexOf(w) < 0) out.push(w); };
+    if (!$('#scr-quiz').hidden && sess) {
+      for (var k = 1; k <= AHEAD_N; k++) {
+        var e = entryById(sess.ids[sess.i + k]);
+        if (e) add(e.es);
+      }
+    } else if (!$('#scr-chal').hidden && challenge) {
+      for (var j = 1; j <= AHEAD_N; j++) {
+        var q = challenge.qs[challenge.i + j];
+        if (q) add(q.es);
+      }
+    }
+    return out;
+  }
+  function prefetchAhead() {
+    if (!settings.tts || !settings.hd || warmJob) return;
+    if (!window.NeuralTTS || !NeuralTTS.warmCache || !warmEngineOk()) return;
+    var words = aheadWords();
+    if (!words.length) return;
+    /* hold the window while quiz narration is wanted (hdWanted) — the word
+       the learner is waiting for must never queue behind a warm word in the
+       shared ort proxy worker */
+    var yieldToNarration = function () {
+      return new Promise(function (resolve) {
+        (function poll() {
+          if (hdWanted === 0) { resolve(); return; }
+          setTimeout(poll, 250);
+        })();
+      });
+    };
+    var run = function () {
+      var job = NeuralTTS.warmCache(words, { voice: settings.hdVoice, rate: settings.rate, wait: yieldToNarration }, null);
+      aheadJob = job;
+      var settle = function () {
+        if (aheadJob === job) aheadJob = null;
+        if (!warmJob) warmResyncOrb();
+      };
+      job.then(settle, settle);
+    };
+    if (aheadJob) aheadJob.then(run, run);   /* previous window still going — chain */
+    else run();
   }
   function cancelWarm() {
     if (!warmJob) return;
@@ -1678,7 +1764,7 @@
   }
   function clearCache() {
     if (!window.NeuralTTS || !window.NeuralTTS.clearWordCache) return;
-    if (warmJob) return;   /* don't wipe a cache a warm run is writing to */
+    if (warmJob || aheadJob) return;   /* don't wipe a cache a warm run is writing to */
     if (!confirm('Delete every cached word audio (all voices)?')) return;
     NeuralTTS.clearWordCache().then(function (n) {
       warmProg = null;                     /* cache is gone — reset the warm progress */
@@ -1695,7 +1781,7 @@
      exact Supertonic cache keys, so a word that matches the selected voice and
      rate plays instantly — no model download, no in-browser warm needed. */
   function loadAudioPackage() {
-    if (warmJob) { toast('Wait for the warm to finish first'); return; }
+    if (warmJob || aheadJob) { toast('Wait for the warm to finish first'); return; }
     if (!window.NeuralTTS || !window.NeuralTTS.importWordCache) { toast('Audio package import unavailable'); return; }
     var picker = $('#pkgPicker');
     if (!picker || !picker.files) { toast('This browser cannot pick folders'); return; }

@@ -423,6 +423,19 @@
     return _assetsP;
   }
 
+  /* Session-set compiles are serialized: the interactive engine and the warm
+     worker each build their own session set inside the SHARED ort proxy
+     worker, and two concurrent compiles would double the model memory inside
+     it (~2 × 380 MB — an OOM recipe). Downloads are shared/deduped by
+     assets(); this lock only orders the compile phases. A failed compile
+     must never block the next slot. */
+  var _compileChain = null;
+  function compileSlot(fn) {
+    var p = (_compileChain || Promise.resolve()).then(fn, fn);
+    _compileChain = p.catch(function () {});
+    return p;
+  }
+
   var supersonic = {
     ort: null, ortP: null,
     ready: null,                 /* promise -> this, once sessions exist */
@@ -572,31 +585,33 @@
       var self = this;
       if (this.ready) return this.ready;
       this.got = {};
-      this.ready = this.ensureOrt().then(function () {
-        return assets();
-      }).then(function (bufs) {
-        var byName = {};
-        ST_ASSETS.forEach(function (a, i) { byName[a[0]] = bufs[i]; });
-        setStatus('loading', 'compiling Supertonic model…');
-        self.cfgs = JSON.parse(new TextDecoder().decode(byName['onnx/tts.json']));
-        self.indexer = JSON.parse(new TextDecoder().decode(byName['onnx/unicode_indexer.json']));
-        /* compile one model at a time so the status line shows real progress
-           (the vector estimator is 245 MB and can take minutes on WASM) */
-        var jobs = [
-          ['duration predictor', 'onnx/duration_predictor.onnx', 'dp'],
-          ['text encoder', 'onnx/text_encoder.onnx', 'te'],
-          ['vector estimator', 'onnx/vector_estimator.onnx', 've'],
-          ['vocoder', 'onnx/vocoder.onnx', 'voc']
-        ];
-        var chain = Promise.resolve();
-        jobs.forEach(function (job, i) {
-          chain = chain.then(function () {
-            setStatus('loading', 'compiling Supertonic model… (' + (i + 1) + '/4 ' + job[0] + ')');
-            return self.session(byName[job[1]]);
-          }).then(function (s) { self[job[2]] = s; });
-        });
-        return chain.then(function () {
-          setStatus('ready', '');
+      this.ready = compileSlot(function () {
+        return self.ensureOrt().then(function () {
+          return assets();
+        }).then(function (bufs) {
+          var byName = {};
+          ST_ASSETS.forEach(function (a, i) { byName[a[0]] = bufs[i]; });
+          setStatus('loading', 'compiling Supertonic model…');
+          self.cfgs = JSON.parse(new TextDecoder().decode(byName['onnx/tts.json']));
+          self.indexer = JSON.parse(new TextDecoder().decode(byName['onnx/unicode_indexer.json']));
+          /* compile one model at a time so the status line shows real progress
+             (the vector estimator is 245 MB and can take minutes on WASM) */
+          var jobs = [
+            ['duration predictor', 'onnx/duration_predictor.onnx', 'dp'],
+            ['text encoder', 'onnx/text_encoder.onnx', 'te'],
+            ['vector estimator', 'onnx/vector_estimator.onnx', 've'],
+            ['vocoder', 'onnx/vocoder.onnx', 'voc']
+          ];
+          var chain = Promise.resolve();
+          jobs.forEach(function (job, i) {
+            chain = chain.then(function () {
+              setStatus('loading', 'compiling Supertonic model… (' + (i + 1) + '/4 ' + job[0] + ')');
+              return self.session(byName[job[1]]);
+            }).then(function (s) { self[job[2]] = s; });
+          });
+          return chain.then(function () {
+            setStatus('ready', '');
+          });
         });
       }).then(function () {
         return self;
@@ -866,34 +881,36 @@
       ensure: function () {
         var self = w;
         if (self.ready) return self.ready;
-        self.ready = supersonic.ensureOrt().then(function () {
-          self.ort = supersonic.ort;
-          return assets();
-        }).then(function (bufs) {
-          var byName = {};
-          ST_ASSETS.forEach(function (a, i) { byName[a[0]] = bufs[i]; });
-          self.cfgs = JSON.parse(new TextDecoder().decode(byName['onnx/tts.json']));
-          self.indexer = JSON.parse(new TextDecoder().decode(byName['onnx/unicode_indexer.json']));
-          var jobs = [
-            ['duration predictor', 'onnx/duration_predictor.onnx', 'dp'],
-            ['text encoder', 'onnx/text_encoder.onnx', 'te'],
-            ['vector estimator', 'onnx/vector_estimator.onnx', 've'],
-            ['vocoder', 'onnx/vocoder.onnx', 'voc']
-          ];
-          var chain = Promise.resolve();
-          jobs.forEach(function (job, i) {
-            chain = chain.then(function () {
-              setStatus('loading', 'compiling Supertonic worker… (' + (i + 1) + '/4 ' + job[0] + ')');
-              return supersonic.session(byName[job[1]]);
-            }).then(function (s) { self[job[2]] = s; });
+        self.ready = compileSlot(function () {
+          return supersonic.ensureOrt().then(function () {
+            self.ort = supersonic.ort;
+            return assets();
+          }).then(function (bufs) {
+            var byName = {};
+            ST_ASSETS.forEach(function (a, i) { byName[a[0]] = bufs[i]; });
+            self.cfgs = JSON.parse(new TextDecoder().decode(byName['onnx/tts.json']));
+            self.indexer = JSON.parse(new TextDecoder().decode(byName['onnx/unicode_indexer.json']));
+            var jobs = [
+              ['duration predictor', 'onnx/duration_predictor.onnx', 'dp'],
+              ['text encoder', 'onnx/text_encoder.onnx', 'te'],
+              ['vector estimator', 'onnx/vector_estimator.onnx', 've'],
+              ['vocoder', 'onnx/vocoder.onnx', 'voc']
+            ];
+            var chain = Promise.resolve();
+            jobs.forEach(function (job, i) {
+              chain = chain.then(function () {
+                setStatus('loading', 'compiling Supertonic worker… (' + (i + 1) + '/4 ' + job[0] + ')');
+                return supersonic.session(byName[job[1]]);
+              }).then(function (s) { self[job[2]] = s; });
+            });
+            return chain;
+          }).then(function () {
+            setStatus('ready', '');
+            return self;
+          }).catch(function (err) {
+            self.ready = null;       /* allow a retry */
+            throw err;
           });
-          return chain;
-        }).then(function () {
-          setStatus('ready', '');
-          return self;
-        }).catch(function (err) {
-          self.ready = null;       /* allow a retry */
-          throw err;
         });
         return self.ready;
       }
@@ -1386,9 +1403,12 @@
      watchdog so a wedged ort proxy worker can never freeze the batch forever
      (it used to stall at "N-1 remaining" when the proxy died mid-run), and a
      run of consecutive failures aborts the batch with a clear error instead of
-     burning the whole list. Resolves to { done, skipped, failed, total,
-     percent }; the promise also carries a .cancel() that stops the batch after
-     the current in-flight word. */
+     burning the whole list. opts.wait (optional) is awaited before each word
+     so a caller can yield to quiz narration — the word the learner is waiting
+     for must never queue behind a warm word in the shared ort proxy worker.
+     Resolves to { done, skipped, failed, total, percent }; the promise also
+     carries a .cancel() that stops the batch after the current in-flight
+     word. */
 
   /* Reject if the underlying promise neither resolves nor rejects in time.
      The orphaned promise is simply abandoned (it can never be cancelled), but
@@ -1405,6 +1425,7 @@
   var WARM_LOOKUP_TIMEOUT = 60000;    /* OPFS hit check */
   var WARM_WORD_TIMEOUT = 180000;     /* style + inference + store for ONE word */
   var WARM_COMPILE_TIMEOUT = 900000;  /* asset download + first-use compile can take many minutes */
+  var WARM_YIELD_TIMEOUT = 60000;     /* hold for quiz narration before a word */
   var WARM_MAX_CONSEC_FAILS = 5;      /* systematic breakage → stop, don't burn the list */
 
   function warmCache(words, opts, onProgress) {
@@ -1414,6 +1435,7 @@
       return Promise.reject(new Error('The Opus word cache belongs to the Supertonic engine — pick a Supertonic HD voice first.'));
     }
     var rate = Math.max(0.7, Math.min(2, Number(opts.rate) || 1));
+    var wait = typeof opts.wait === 'function' ? opts.wait : null;
     var total = words.length;
     if (!total) {
       var empty = { done: 0, skipped: 0, failed: 0, total: 0, percent: 100 };
@@ -1438,18 +1460,21 @@
       return warmGuard(skipP, WARM_LOOKUP_TIMEOUT, 'cache lookup').then(function (hit) {
         if (hit) return 'skipped';
         if (!tPre) return 'failed';
-        return warmGuard(worker.ensure(), WARM_COMPILE_TIMEOUT, 'Supertonic model compile').then(function () {
-          return warmGuard(supersonic.style(meta.voice).then(function (style) {
-            if (!style) return null;
-            return supersonic.infer.call(worker, style, tPre, rate, null);
-          }).then(function (out) {
-            if (!out) return 'failed';
-            var blob = wavBlob(out.wav, out.sr);
-            /* await the write so "done" means cached on disk, not merely
-               synthesized — the realtime Opus encode is bounded by its own
-               recorder safety timeout */
-            return wordCacheStore(key, out.wav, out.sr, blob).then(function () { return 'done'; });
-          }), WARM_WORD_TIMEOUT, 'Supertonic synthesis');
+        var yieldP = wait ? warmGuard(wait(), WARM_YIELD_TIMEOUT, 'yield to quiz narration') : Promise.resolve();
+        return yieldP.then(function () {
+          return warmGuard(worker.ensure(), WARM_COMPILE_TIMEOUT, 'Supertonic model compile').then(function () {
+            return warmGuard(supersonic.style(meta.voice).then(function (style) {
+              if (!style) return null;
+              return supersonic.infer.call(worker, style, tPre, rate, null);
+            }).then(function (out) {
+              if (!out) return 'failed';
+              var blob = wavBlob(out.wav, out.sr);
+              /* await the write so "done" means cached on disk, not merely
+                 synthesized — the realtime Opus encode is bounded by its own
+                 recorder safety timeout */
+              return wordCacheStore(key, out.wav, out.sr, blob).then(function () { return 'done'; });
+            }), WARM_WORD_TIMEOUT, 'Supertonic synthesis');
+          });
         });
       }).catch(function (err) {
         console.warn('[vocabes] word-cache warm failed for "' + word + '":', err);
