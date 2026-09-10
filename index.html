@@ -184,6 +184,26 @@ h2 { font-family: var(--display); font-size: clamp(1.45rem, 4vw, 1.8rem); letter
 .seg button.active { background: var(--surface); color: var(--text); box-shadow: 0 2px 10px rgba(20, 23, 50, .14); }
 html[data-theme="dark"] .seg button.active { box-shadow: 0 2px 10px rgba(0,0,0,.4); }
 
+/* collapsible options on the main menu: the primary action stays dominant */
+.options { width: 100%; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface2); }
+.options > summary {
+  list-style: none; cursor: pointer; display: flex; align-items: center; gap: 9px;
+  padding: 11px 14px; font-weight: 700; font-size: .85rem;
+  -webkit-tap-highlight-color: transparent;
+}
+.options > summary::-webkit-details-marker { display: none; }
+.options > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
+.opt-kicker { font-size: .64rem; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.opt-summary { color: var(--text); margin-right: auto; }
+.opt-caret { color: var(--muted); font-size: .8rem; transition: transform .2s; }
+.options[open] .opt-caret { transform: rotate(180deg); }
+.options-body { display: flex; flex-direction: column; gap: 14px; padding: 2px 14px 16px; }
+.first-run {
+  font-size: .82rem; color: var(--muted); width: 100%;
+  background: var(--accent-soft); border-radius: var(--r-sm); padding: 8px 14px;
+}
+.first-run b { color: var(--text); }
+
 /* buttons */
 .primary, .secondary, .ghost {
   border: none; font: inherit; font-weight: 800; cursor: pointer;
@@ -679,6 +699,9 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
   .seg-row { flex-direction: column; align-items: stretch; gap: 8px; }
   .seg { width: 100%; display: flex; }
   .seg button { flex: 1 1 0; padding: 10px 6px; }
+  /* keep the primary action reachable while the challenge grid scrolls past */
+  #scr-start .card.hero { overflow: visible; }
+  #scr-start #startBtn { position: sticky; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 6; }
 }
 @media (max-width: 460px) {
   .tag { display: none; }   /* "European Spanish" — already in the hero subtitle */
@@ -743,30 +766,40 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
       <h1>Spanish Flashcards</h1>
       <div class="flag-stripe" aria-hidden="true"><i></i><i></i><i></i></div>
       <p class="sub">European Spanish · B1–C2 · spaced repetition · cluster challenges</p>
+      <p id="firstRun" class="first-run" hidden>Pick your levels below, then hit <b>Start session</b>.</p>
 
       <div class="lbl">Levels</div>
       <div class="chips" id="levelChips"></div>
 
-      <div class="row seg-row">
-        <span class="lbl">Answer style</span>
-        <div class="seg" id="ansSeg">
-          <button data-ans="type">✏️ Type it</button>
-          <button data-ans="mix">🔀 Mixed</button>
-          <button data-ans="flip">🃏 Flashcard</button>
-        </div>
-      </div>
+      <details class="options" id="optionsBox">
+        <summary>
+          <span class="opt-kicker">Options</span>
+          <span class="opt-summary" id="optSummary"></span>
+          <span class="opt-caret" aria-hidden="true">▾</span>
+        </summary>
+        <div class="options-body">
+          <div class="row seg-row">
+            <span class="lbl">Answer style</span>
+            <div class="seg" id="ansSeg">
+              <button data-ans="type">✏️ Type it</button>
+              <button data-ans="mix">🔀 Mixed</button>
+              <button data-ans="flip">🃏 Flashcard</button>
+            </div>
+          </div>
 
-      <div class="row seg-row">
-        <span class="lbl">Direction</span>
-        <div class="seg" id="dirSeg">
-          <button data-dir="es-en">ES → EN</button>
-          <button data-dir="en-es">EN → ES</button>
-          <button data-dir="mix">Mix</button>
+          <div class="row seg-row">
+            <span class="lbl">Direction</span>
+            <div class="seg" id="dirSeg">
+              <button data-dir="es-en">ES → EN</button>
+              <button data-dir="en-es">EN → ES</button>
+              <button data-dir="mix">Mix</button>
+            </div>
+          </div>
         </div>
-      </div>
-      <p id="dirHint" class="dir-hint"></p>
+      </details>
 
       <button id="startBtn" class="primary big">▶&nbsp; Start session</button>
+      <p id="dirHint" class="dir-hint"></p>
 
       <div id="startStats" class="stats"></div>
     </div>
@@ -4535,6 +4568,13 @@ const VOCAB = [["lunes","Monday","b1","wochentage"],["martes","Tuesday","b1","wo
     $$('#ansSeg button').forEach(function (b) {
       b.classList.toggle('active', b.dataset.ans === settings.ans);
     });
+
+    var optAns = settings.ans === 'type' ? '✏️ Type'
+               : settings.ans === 'flip' ? '🃏 Flashcard' : '🔀 Mixed';
+    var optDir = settings.dir === 'es-en' ? 'ES → EN'
+               : settings.dir === 'en-es' ? 'EN → ES' : 'Mix';
+    $('#optSummary').textContent = optAns + ' · ' + optDir;
+    $('#firstRun').hidden = state.xp !== 0;
 
     /* one contextual "how to play" line — it matches the chosen answer style,
        so typed mode never shows flashcard instructions and vice versa */

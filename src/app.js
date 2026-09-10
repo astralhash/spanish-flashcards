@@ -619,6 +619,13 @@
       b.classList.toggle('active', b.dataset.ans === settings.ans);
     });
 
+    var optAns = settings.ans === 'type' ? '✏️ Type'
+               : settings.ans === 'flip' ? '🃏 Flashcard' : '🔀 Mixed';
+    var optDir = settings.dir === 'es-en' ? 'ES → EN'
+               : settings.dir === 'en-es' ? 'EN → ES' : 'Mix';
+    $('#optSummary').textContent = optAns + ' · ' + optDir;
+    $('#firstRun').hidden = state.xp !== 0;
+
     /* one contextual "how to play" line — it matches the chosen answer style,
        so typed mode never shows flashcard instructions and vice versa */
     var dirLabel = settings.dir === 'es-en' ? 'Spanish → English'

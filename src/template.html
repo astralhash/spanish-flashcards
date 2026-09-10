@@ -32,30 +32,40 @@
       <h1>Spanish Flashcards</h1>
       <div class="flag-stripe" aria-hidden="true"><i></i><i></i><i></i></div>
       <p class="sub">European Spanish · B1–C2 · spaced repetition · cluster challenges</p>
+      <p id="firstRun" class="first-run" hidden>Pick your levels below, then hit <b>Start session</b>.</p>
 
       <div class="lbl">Levels</div>
       <div class="chips" id="levelChips"></div>
 
-      <div class="row seg-row">
-        <span class="lbl">Answer style</span>
-        <div class="seg" id="ansSeg">
-          <button data-ans="type">✏️ Type it</button>
-          <button data-ans="mix">🔀 Mixed</button>
-          <button data-ans="flip">🃏 Flashcard</button>
-        </div>
-      </div>
+      <details class="options" id="optionsBox">
+        <summary>
+          <span class="opt-kicker">Options</span>
+          <span class="opt-summary" id="optSummary"></span>
+          <span class="opt-caret" aria-hidden="true">▾</span>
+        </summary>
+        <div class="options-body">
+          <div class="row seg-row">
+            <span class="lbl">Answer style</span>
+            <div class="seg" id="ansSeg">
+              <button data-ans="type">✏️ Type it</button>
+              <button data-ans="mix">🔀 Mixed</button>
+              <button data-ans="flip">🃏 Flashcard</button>
+            </div>
+          </div>
 
-      <div class="row seg-row">
-        <span class="lbl">Direction</span>
-        <div class="seg" id="dirSeg">
-          <button data-dir="es-en">ES → EN</button>
-          <button data-dir="en-es">EN → ES</button>
-          <button data-dir="mix">Mix</button>
+          <div class="row seg-row">
+            <span class="lbl">Direction</span>
+            <div class="seg" id="dirSeg">
+              <button data-dir="es-en">ES → EN</button>
+              <button data-dir="en-es">EN → ES</button>
+              <button data-dir="mix">Mix</button>
+            </div>
+          </div>
         </div>
-      </div>
-      <p id="dirHint" class="dir-hint"></p>
+      </details>
 
       <button id="startBtn" class="primary big">▶&nbsp; Start session</button>
+      <p id="dirHint" class="dir-hint"></p>
 
       <div id="startStats" class="stats"></div>
     </div>
