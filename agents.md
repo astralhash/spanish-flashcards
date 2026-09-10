@@ -15,6 +15,9 @@ node scripts/tests/tts-transfer-test.mjs   # Supertonic infer under ort's
                                     # buffer-TRANSFER rules (stubbed ort: model
                                     # bytes neutered per create, tensor data
                                     # neutered per run — any reuse throws)
+node scripts/tests/tts-opfs-test.mjs        # Supertonic model/word cache must
+                                    # persist in OPFS (flattened names; fake
+                                    # OPFS backed by a real temp dir)
 ```
 
 If `node` isn't on PATH, use `/opt/homebrew/bin/node`.
@@ -241,8 +244,8 @@ HD is strictly opt-in (`settings.hd: false` default).
 
 To add a voice: one entry in `VOICES` (`engine` + engine-native `voice` id +
 honest `group`/`label` covering accent, quality and size); Piper ids are
-historic — never rename them (stored settings). Then rebuild + run all four
-test scripts. Verify a new engine end-to-end in headless Chrome against the
+historic — never rename them (stored settings). Then rebuild + run the test
+scripts. Verify a new engine end-to-end in headless Chrome against the
 real `src/tts.js` (drive `NeuralTTS.speak` with a stubbed `Audio`) before
 claiming it works — the Kokoro `phonemizer`-only-speaks-English and the
 Supertonic `bufs`-vs-`byName` bugs both escaped unit tests.
@@ -271,12 +274,11 @@ load and no inference**. Kokoro/Piper synthesize directly (no cache).
   with `env.wasm.proxy` on, and that proxy is a **single worker shared by
   every session**, so extra "workers" never synthesized in parallel, they
   only doubled the model memory inside the proxy (~2 × 380 MB, OOM recipe).
-  Worse, the proxy **transfers** (neuters) the model ArrayBuffer
-  to its worker on every `InferenceSession.create` — even a failed create — so
-  `supersonic.session()` hands each attempt a private `buf.slice(0)` copy;
-  never create a session from a shared `assets()` buffer (a second warm
-  worker / the interactive engine after a warm used to get detached 0-byte
-  buffers → every word failed and the run froze at "N-1 remaining"). The warm
+  Because the proxy **transfers** the model buffer on every create (see the
+  ort transfer rules above), a shared `assets()` buffer must never back a
+  second `InferenceSession.create`: a second warm worker / the interactive
+  engine after a warm used to get detached 0-byte buffers → every word failed
+  and the run froze at "N-1 remaining". The warm
   worker (one, cached across runs in `_warmWorker`, dropped if the run aborts
   on engine failure) gets its own compiled sessions so a mid-warm 🔊 can't
   run concurrent inference on the interactive sessions. Every stage is
@@ -303,7 +305,7 @@ load and no inference**. Kokoro/Piper synthesize directly (no cache).
 - **Sizes**: ~4–8 KB/word Opus vs ~88 KB/s WAV (44.1 kHz mono 16-bit); the
   whole deck is ~10–20 MB per voice. No eviction yet (no quota pressure at
   that size); `clearWordCache()` drops memory + all cached audio files and
-  resolves the deleted count (no Settings UI wired — call it from console).
+  resolves the deleted count (wired to the Settings "Clear cache" button).
   Pre-bitrate-bump blobs (`st-` prefix, ≤32 kbps) are swept from OPFS once on
   load (`sweepLegacyWords`) — they can never be replayed.
 - **Fallbacks**: no Opus encoder (Safari, jsdom) → the WAV is stored instead
@@ -337,8 +339,8 @@ unaffected) and falls back to the header when no card is visible.
 
 ## Do / Don't
 
-- Do edit `src/` + `data/`, then rebuild `index.html`, then run all four
-  test scripts before committing.
+- Do edit `src/` + `data/`, then rebuild `index.html`, then run the test
+  scripts before committing (`cd scripts/tests && npm i` once for e2e).
 - Do commit `index.html` alongside source changes (it is the deliverable).
 - Don't put scratch/working files inside `data/` (the build loads **all**
   `data/*.json` — a stray file becomes vocab).

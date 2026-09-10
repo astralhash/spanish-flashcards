@@ -41,18 +41,19 @@ python3 -m http.server 8000       # or: npx serve .
     words (errorful generation), then self-graded reveal.
 - **Pronunciation** — 🔊 buttons/chips and the <kbd>S</kbd> key speak Spanish on
   demand; optionally every word is spoken automatically as it is revealed
-  (Settings). Two engines: ranked system voices (best installed voice
-  auto-picked, switchable with preview in Settings) and opt-in **HD neural
-  voices** — Kokoro-82M, Supertonic 3 or Piper models running fully
-  in-browser, downloaded once (~20–380 MB depending on voice, cached) then
-  offline-capable. Accent trade-offs (natural-but-Latin vs. authentic-Spain
-  vs. studio-neutral) are labeled in the voice dropdown. Falls back to
-  system speech automatically. Space always advances to the next word, even
-  right after using a speaker button.
-- **Cluster challenges** — multiple-choice or typed bursts over word groups:
-  weekdays, months, numbers, colors, family, food & drink, body, animals.
-  Missed items are re-asked in a replay round, and every challenge ends with
-  a "words to watch" recap.
+  (Settings). Ranked system voices (best installed voice auto-picked,
+  switchable with preview) or opt-in **HD neural voices** — Kokoro-82M,
+  Supertonic 3 or Piper models running fully in-browser, downloaded once
+  (~27–380 MB depending on voice, cached) then offline-capable. Accent
+  trade-offs (natural-but-Latin vs. authentic-Spain vs. studio-neutral) are
+  labeled in the voice dropdown. Falls back to system speech automatically.
+  Space always advances to the next word, even right after using a speaker
+  button.
+- **Cluster challenges** — multiple-choice or typed bursts over 21 word
+  groups (weekdays, months, numbers, colors, family, food & drink, body,
+  animals, expressions, slang, TV & film, home, clothing, weather, work,
+  travel, sports, school, health, tech, hobbies). Missed items are re-asked
+  in a replay round, and every challenge ends with a "words to watch" recap.
 - **Session recap** — missed words are listed after each session with a
   one-click "practice these now" re-run.
 - **Conjugation tables** — hover any verb to see 7 tenses + imperatives
@@ -75,7 +76,9 @@ python3 -m http.server 8000       # or: npx serve .
 | `scripts/smoke.mjs` | unit tests for `core.cjs` |
 | `scripts/conj-test.mjs` | battery of conjugation checks (`conj.cjs`) |
 | `scripts/tests/e2e.mjs` | jsdom end-to-end test against the built `index.html` |
-| `scripts/topup.mjs` | dev helper: fill level shortfalls from curated candidates |
+| `scripts/tests/tts-transfer-test.mjs` | ort buffer-transfer regression (Supertonic inference) |
+| `scripts/tests/tts-opfs-test.mjs` | OPFS model/word-cache regression |
+| `scripts/topup.mjs` | dev helper: emit curated shortfall candidates to gitignored `topup.json` |
 
 See `agents.md` for the working conventions (data format, dedupe rules,
 conjugation coverage, test commands).
@@ -87,4 +90,6 @@ node scripts/build.mjs            # must finish without SHORTFALL; rebuilds inde
 node scripts/smoke.mjs            # core SRS/challenge logic
 node scripts/conj-test.mjs        # conjugation forms
 node scripts/tests/e2e.mjs        # full UI flow in jsdom (needs: cd scripts/tests && npm i)
+node scripts/tests/tts-transfer-test.mjs   # ort buffer-transfer regression
+node scripts/tests/tts-opfs-test.mjs       # OPFS model/word-cache regression
 ```

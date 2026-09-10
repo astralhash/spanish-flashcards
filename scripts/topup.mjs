@@ -1,4 +1,7 @@
-/* Top-up: fill remaining slots with curated candidates that are NOT already in the deck. */
+/* Top-up: fill remaining slots with curated candidates that are NOT already in the deck.
+   Writes ./topup.json (repo root, gitignored) — review and copy the rows you want
+   into the matching data/*.json file; never leave output inside data/ (the build
+   ingests every data/*.json). */
 import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
 
 const TARGETS = { b1: 800, b2: 600, c1: 400, c2: 200 };
@@ -135,5 +138,5 @@ for (const lvl of Object.keys(TARGETS)) {
 }
 
 const all = [...out.b1, ...out.b2, ...out.c1, ...out.c2];
-writeFileSync('data/topup.json', JSON.stringify(all, null, 1) + '\n');
-console.log('written data/topup.json with', all.length, 'entries');
+writeFileSync('topup.json', JSON.stringify(all, null, 1) + '\n');
+console.log('written topup.json with', all.length, 'entries — review, then copy into data/*.json');

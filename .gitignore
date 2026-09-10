@@ -4,6 +4,9 @@ scripts/tests/node_modules/
 # generated audio package output (legacy, gitignored)
 /audio/
 
+# scripts/topup.mjs scratch output (never commit; curate into data/*.json)
+/topup.json
+
 # OS junk
 .DS_Store
 *.log

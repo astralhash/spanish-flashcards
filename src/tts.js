@@ -1,6 +1,6 @@
 /* VocabES neural text-to-speech — HD voices running in the browser.
  *
- * Two engines, each lazily imported from a CDN the first time one of its
+ * Three engines, each lazily imported from a CDN the first time one of its
  * voices is actually needed:
  *
  *   • Kokoro-82M (kokoro-js on Transformers.js/ONNX WASM) — the quality
