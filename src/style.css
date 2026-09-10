@@ -676,6 +676,26 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
 ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
 
+/* ============ desktop: use the width, cut the scroll ============ */
+@media (min-width: 900px) {
+  main { max-width: 1040px; }
+  /* menu + results split into a primary column and a challenge rail */
+  #scr-start, #scr-done {
+    display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+    align-items: start; gap: 16px;
+  }
+  #scr-start { grid-template-areas: "hero chal" "foot chal"; }
+  #scr-start .card.hero { grid-area: hero; }
+  #scr-start .chal-list { grid-area: chal; }
+  #scr-start .foot-note { grid-area: foot; }
+  #scr-done { grid-template-areas: "hero chal" "recap chal"; }
+  #scr-done .card.hero { grid-area: hero; }
+  #scr-done .recap { grid-area: recap; }
+  #scr-done .chal-list { grid-area: chal; }
+  /* let the challenge rail scroll on its own rather than stretching the page */
+  #scr-start .chal-grid, #scr-done .chal-grid { max-height: min(60dvh, 520px); }
+}
+
 /* ============ mobile ============
    Test floor: 720p phones (720×1280 @2 → 360×640 CSS). Also verified:
    1080×2340 @3 → 360×780 · 1080×2400 @2.625 → 411×915 · 1440×3120 @3.5 → 412×891. */
@@ -692,8 +712,11 @@ code { background: var(--surface2); border: 1px solid var(--line); border-radius
   .seg { width: 100%; display: flex; }
   .seg button { flex: 1 1 0; padding: 10px 6px; }
   /* keep the primary action reachable while the challenge grid scrolls past */
-  #scr-start .card.hero { overflow: visible; }
-  #scr-start #startBtn { position: sticky; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 6; }
+  #scr-start { padding-bottom: 78px; }
+  #scr-start #startBtn {
+    position: fixed; left: 14px; right: 14px; margin: 0 auto; max-width: 480px;
+    bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 40;
+  }
 }
 @media (max-width: 460px) {
   .tag { display: none; }   /* "European Spanish" — already in the hero subtitle */
