@@ -80,13 +80,13 @@
       <div class="sub small pre-label">🔮 New word — take a guess first</div>
       <div id="preWord" class="word"></div>
       <div id="preOpts" class="opts"></div>
-      <div id="preFb" class="type-fb" hidden>
+      <div id="preFb" class="type-fb" role="status" aria-live="polite" hidden>
         <div class="reveal-row"><span id="preFbQ" class="reveal-q"></span><span class="reveal-eq">=</span><span id="preFbA" class="reveal-a"></span></div>
       </div>
     </div>
 
-    <div id="flip" class="flipcard" tabindex="0" role="button" aria-label="Flashcard — show answer">
-      <div class="face front">
+    <div id="flip" class="flipcard" role="group" aria-label="Flashcard">
+      <div class="face front" aria-hidden="false">
         <div class="badges">
           <span id="lvlBadge" class="badge"></span>
           <span id="clsBadge" class="badge cluster" hidden></span>
@@ -94,7 +94,7 @@
         </div>
         <div id="frontWord" class="word"></div>
       </div>
-      <div class="face back">
+      <div class="face back" aria-hidden="true">
         <div class="badges"><span class="badge">answer</span></div>
         <div id="backWord" class="word"></div>
         <div id="grades" class="grades">
@@ -110,7 +110,7 @@
       <div id="typeDir" class="sub small"></div>
       <div id="typeWord" class="word"></div>
       <input id="typeInput" class="type-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="type your answer · Enter = show" enterkeyhint="done">
-      <div id="typeFb" class="type-fb" hidden>
+      <div id="typeFb" class="type-fb" role="status" aria-live="polite" hidden>
         <div class="verdict" id="typeVerdict" hidden></div>
         <div class="reveal-row"><span id="typeFbQ" class="reveal-q"></span><span class="reveal-eq">=</span><span id="typeFbA" class="reveal-a"></span></div>
       </div>
@@ -165,7 +165,7 @@
       <div id="chOpts" class="opts"></div>
       <div id="chTypeWrap" class="type-panel slim" hidden>
         <input id="chTypeInput" class="type-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="your answer · Enter = show" enterkeyhint="done">
-        <div id="chTypeFb" class="type-fb" hidden>
+        <div id="chTypeFb" class="type-fb" role="status" aria-live="polite" hidden>
           <div class="verdict" id="chTypeVerdict" hidden></div>
           <div class="reveal-row"><span id="chTypeFbQ" class="reveal-q"></span><span class="reveal-eq">=</span><span id="chTypeFbA" class="reveal-a"></span></div>
         </div>

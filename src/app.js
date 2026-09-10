@@ -649,8 +649,9 @@
   }
   function statBox(icon, label, value) {
     var d = el('div', 'stat');
-    d.appendChild(el('b', null, icon + ' ' + value));
-    d.appendChild(el('span', null, label));
+    d.appendChild(el('span', 'stat-icon', icon));
+    d.appendChild(el('b', null, String(value)));
+    d.appendChild(el('span', 'stat-label', label));
     return d;
   }
   function toggleLevel(lvl) {
@@ -703,6 +704,7 @@
     /* pretest/typed panels replace the card: clear a stale answer-side state so
        the hidden card can never resurface flipped */
     if (which !== 'flip') flip.classList.remove('flipped');
+    syncFlipFaces(flip);
     $('#typePanel').hidden = which !== 'type';
   }
 
@@ -747,6 +749,7 @@
     void flip.offsetWidth;                 /* snap back without animating */
     if (answerUp) flip.classList.add('flipped');
     void flip.offsetWidth;                 /* commit (possibly answer-up) while transitions are off */
+    syncFlipFaces(flip);
     flip.style.transition = '';
     faces.forEach(function (f) { f.style.transition = ''; });
     flip.classList.add('reload');
@@ -755,9 +758,19 @@
     setQuizVisibility('flip');
   }
 
+  function syncFlipFaces(flip) {
+    flip = flip || $('#flip');
+    var flipped = flip.classList.contains('flipped');
+    var front = flip.querySelector('.face.front');
+    var back = flip.querySelector('.face.back');
+    if (front) front.setAttribute('aria-hidden', flipped ? 'true' : 'false');
+    if (back) back.setAttribute('aria-hidden', flipped ? 'false' : 'true');
+  }
+
   function flipCard() {
     var flip = $('#flip');
     flip.classList.toggle('flipped');
+    syncFlipFaces(flip);
     /* autoSpeak: hear the Spanish word the moment the card reveals it */
     if (settings.tts && settings.autoSpeak && flip.classList.contains('flipped')) {
       var e = curEntry();
