@@ -341,6 +341,10 @@ unaffected) and falls back to the header when no card is visible.
 
 - Do edit `src/` + `data/`, then rebuild `index.html`, then run the test
   scripts before committing (`cd scripts/tests && npm i` once for e2e).
+- Do keep `scripts/tests/e2e.mjs` event-driven: it pollls the DOM with
+  `waitFor(...)` and only sleeps to prove that nothing auto-advances. Assert
+  via `waitFor`, don't reintroduce fixed settle sleeps (they added ~30 s of
+  pure idle time across the run).
 - Do commit `index.html` alongside source changes (it is the deliverable).
 - Don't put scratch/working files inside `data/` (the build loads **all**
   `data/*.json` — a stray file becomes vocab).

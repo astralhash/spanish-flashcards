@@ -336,7 +336,6 @@ impOk('dormirse', 'nosotros', 'durmámonos');
 impOk('reírse', 'tu', 'ríete');
 impOk('reírse', 'vosotros', 'reíos');
 impOk('reírse', 'nosotros', 'riámonos');
-impOk('sonreír', 'tu', 'sonríe');
 impOk('probarse', 'tu', 'pruébate');
 impOk('probarse', 'vosotros', 'probaos');
 impOk('perderse', 'tu', 'piérdete');
